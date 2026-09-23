@@ -1,0 +1,244 @@
+Implement the Jahvi Dashboard / Quick Edit using the existing Headshot Extraction Lab as the reference implementation.
+
+IMPORTANT: Do not overcomplicate this. Reuse existing working logic, UI patterns, authentication/access logic, SSE logic, and video-serving logic wherever possible. Do not introduce Redis, Celery, background queues, job-ID systems, new authentication systems, or unnecessary abstractions.
+
+1. Dashboard UI
+
+The Dashboard should use the exact same headshot timestamp bar system and interaction logic already used in the Headshot Extraction Lab.
+
+Do not create a second version of the timestamp selector.
+
+Reuse:
+
+- The same bar UI
+- Drag/select behavior
+- Timestamp collection
+- Preview/seek behavior
+- Headshot marker logic
+
+The user manually selects the headshot timestamps.
+
+Also inspect the new Dashboard files/UI already uploaded and complete the existing Dashboard rather than redesigning it.
+
+2. Gap Mode
+
+The user can choose one of three modes:
+
+Normal
+
+- Do not cut or modify the timeline after Stage 2.
+- Just return the Stage 2 video.
+
+Maximum Gap
+
+- User can choose the maximum allowed gap.
+- Default maximum gap is 3 seconds.
+- User can change it as allowed by the existing UI.
+- Run the existing patching logic/file for this mode.
+
+Exact Gap
+
+- User can choose an exact gap, up to the existing allowed limit (10 seconds).
+- Run the existing patchless/exact-gap logic for this mode.
+- The goal is to make the headshot gaps exactly the requested duration.
+
+Reuse the existing "patch.py" / "patchless.py" logic where applicable. Do not rewrite working patching logic unless necessary for integration.
+
+3. Stage Order — IMPORTANT
+
+Use this exact order:
+
+User video
+    ↓
+Headshot timestamps from the bar
+    ↓
+STAGE 2 — Effects + 1.5× speed
+    ↓
+STAGE 1 — Gap processing
+    ↓
+Final video
+    ↓
+SSE / existing video response logic
+    ↓
+Frontend automatically loads the final file
+
+Stage 2 MUST run before Stage 1.
+
+The reason is that the effects use the user's original headshot timestamps. We do not want Stage 1 to change the timeline before the timestamp-based effects are applied.
+
+4. Stage 2 Filter Architecture
+
+Use the existing filter architecture discussed for Jahvi.
+
+There are two filters:
+
+Filter 1
+
+- Runs on the entire video.
+- Used for things such as EQ, color pop, contrast, saturation, etc.
+- NO "enable" timing on this filter.
+
+Filter 2
+
+- This is the headshot-specific effect.
+- ONLY this filter receives the dynamic "enable" expression.
+- Python builds the "enable" expression from the user's selected headshot timestamps.
+
+Example concept:
+
+filter_1,
+filter_2:enable='between(t,4.2,5.2)+between(t,8.7,9.7)+between(t,15.1,16.1)'
+
+Do not bring back the old global/per-beat hardcoded effect system.
+
+The effect timing must be dynamically generated from the user's selected timestamps.
+
+5. Effects / Database
+
+Create the new database table needed for Dashboard effects.
+
+Inspect the new Dashboard files uploaded to the project to see the available styles/effects such as:
+
+- Rage
+- Cinematic
+- Funk
+- etc.
+
+When the user selects a style:
+
+1. Determine the user's current plan.
+2. Find effects matching the selected style and allowed plan.
+3. Randomly select one matching effect.
+4. Apply that effect's Filter 1 and Filter 2 configuration.
+
+Do not hardcode every effect directly into the Dashboard Python route.
+
+Use the database-driven effect system.
+
+6. 1.5× Speed
+
+Every Dashboard Stage 2 output should use the required 1.5× speed treatment.
+
+Also retain the global color-pop/EQ treatment.
+
+The 1.5× speed transformation changes the timeline, so timestamps must be converted before Stage 1.
+
+For every original headshot timestamp:
+
+new_timestamp = original_timestamp / 1.5
+
+Then add the default 0.4 seconds to create the protected Stage-1 boundary:
+
+protected_timestamp = (original_timestamp / 1.5) + 0.4
+
+Example:
+
+Original headshot = 2.0s
+
+2.0 / 1.5 = 1.333s
+
+1.333 + 0.4 = 1.733s
+
+Stage 1 should receive 1.733s as the timestamp/boundary for that headshot.
+
+The purpose of the "+0.4s" is to ensure Stage 1 does not cut away the headshot effect immediately after the headshot timestamp.
+
+Do NOT invent a complicated timestamp synchronization system.
+
+Just calculate these values in Stage 2 and pass them directly to Stage 1.
+
+6. Playback speed
+
+Dashboard Stage 2 must preserve the user's original playback speed.
+
+Also retain the global color-pop/EQ treatment.
+
+The Stage 2 effect timing uses the original user timestamps directly. Stage 1
+receives each original timestamp plus the default 0.4 seconds as its protected
+boundary, so the headshot effect is not cut away immediately.
+Stage 1 simply uses the timestamps passed from Stage 2.
+
+8. Authentication / "/me"
+
+When the Dashboard loads, call the existing "/me" endpoint to populate the user's dashboard information.
+
+Reuse the exact same authentication, access, plan, credit, and renewal logic already used by the Headshot Extraction Lab.
+
+The Dashboard must behave consistently with Extraction Lab.
+
+If Extraction Lab automatically renews/refreshes access information, use the same mechanism here.
+
+Do NOT create another authentication/access system.
+
+9. SSE / Video Response
+
+Reuse the same SSE/progress/streaming logic from the Headshot Extraction Lab.
+
+After processing:
+
+final video
+    ↓
+filename
+    ↓
+existing SSE/response mechanism
+    ↓
+frontend receives filename
+    ↓
+frontend automatically loads/plays/downloads the video
+
+Do not create a completely new video-delivery architecture.
+
+Use the existing working pattern from Extraction Lab.
+
+10. Keep It Simple
+
+This is extremely important.
+
+Do NOT:
+
+- Add Redis
+- Add Celery
+- Add a queue system
+- Add a new job-management database
+- Add unnecessary job IDs
+- Add another authentication system
+- Rebuild the existing SSE system
+- Rebuild the existing timestamp bar
+- Rediscover headshots
+- Create unnecessary abstractions
+- Replace working Extraction Lab code just for the sake of refactoring
+
+Reuse what already works.
+
+The desired pipeline is simply:
+
+/me
+ ↓
+Dashboard
+ ↓
+User uploads video
+ ↓
+User selects headshots using existing bar system
+ ↓
+User selects style
+ ↓
+User selects Normal / Maximum Gap / Exact Gap
+ ↓
+STAGE 2
+ ├─ global Filter 1
+ ├─ timestamped Filter 2
+ ├─ 1.5× speed
+ └─ calculate protected timestamps
+ ↓
+STAGE 1
+ ├─ Normal → no cutting
+ ├─ Maximum Gap → patch.py
+ └─ Exact Gap → patchless.py
+ ↓
+Final filename
+ ↓
+Existing SSE/video response system
+ ↓
+Frontend automatically receives and loads final video
+
+Before making large changes, inspect the existing Headshot Extraction Lab implementation and the newly uploaded Dashboard files. Integrate with what is already there instead of creating parallel systems.

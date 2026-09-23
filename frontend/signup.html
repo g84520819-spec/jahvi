@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jahvi — Create your account</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="signup.css" />
+</head>
+<body>
+
+<div class="signup-page">
+
+  <!-- LEFT: BRAND PANEL -->
+  <section class="brand-panel">
+    <a href="/" class="brand-logo">
+      <img src="clipForge.png" alt="Jahvi logo" class="brand-logo-image" />
+      <span>Jahvi</span>
+    </a>
+
+    <div class="brand-panel-content">
+      <h1 class="brand-headline">Create your <em>account</em> in seconds</h1>
+      <p class="brand-subtext">
+        Sign up to get started. Your data is protected end to end and your
+        password is never stored in plain text.
+      </p>
+
+      <ul class="brand-feature-list">
+        <li class="brand-feature-item">
+          <span class="brand-feature-icon">✓</span>
+          Secure Argon2 password hashing
+        </li>
+        <li class="brand-feature-item">
+          <span class="brand-feature-icon">✓</span>
+          Device-verified signups
+        </li>
+        <li class="brand-feature-item">
+          <span class="brand-feature-icon">✓</span>
+          Fast, encrypted session tokens
+        </li>
+      </ul>
+    </div>
+
+    <div class="brand-game-badges"></div>
+  </section>
+
+  <!-- RIGHT: FORM PANEL -->
+  <section class="form-panel">
+    <div class="form-panel-content">
+
+      <div class="form-eyebrow">
+        <span class="form-eyebrow-dot"></span>
+        Create account
+      </div>
+
+      <h2 class="form-heading">Sign up</h2>
+      <p class="form-subtext">Already have an account? <a href="login.html" class="login-redirect-link">Log in</a></p>
+
+      <form id="signup-form" novalidate>
+
+        <div class="form-group">
+          <label class="form-label" for="full_name">Full name</label>
+          <input class="form-input" type="text" id="full_name" name="full_name" placeholder="Jane Doe" required minlength="2" maxlength="120" autocomplete="name" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="email">Email address</label>
+          <input class="form-input" type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email" />
+        </div>
+
+        <div class="form-group form-group-password">
+          <label class="form-label" for="password">Password</label>
+          <input class="form-input" type="password" id="password" name="password" placeholder="At least 8 characters" required minlength="8" autocomplete="new-password" />
+          <button type="button" class="toggle-password-btn" id="toggle-password" aria-label="Show password">👁</button>
+        </div>
+
+        <label class="terms-agreement">
+          <input type="checkbox" class="terms-checkbox" id="terms" required />
+          <span class="terms-text">I agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a></span>
+        </label>
+
+        <div id="form-error" class="form-error" role="alert" aria-live="polite"></div>
+
+        <button type="submit" class="submit-button" id="submit-btn">Create account</button>
+      </form>
+
+      <a href="/" class="back-home-link">← Back to home</a>
+    </div>
+  </section>
+
+</div>
+
+<script src="api_config.js"></script>
+<script src="signup.js"></script>
+</body>
+</html>

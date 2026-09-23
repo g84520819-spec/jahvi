@@ -1,0 +1,726 @@
+JAHVI — HEADSHOT LAB + VIDEO PROCESSING FLOW
+
+The existing incomplete UI is already inside "/frontend".
+
+IMPORTANT:
+Before changing anything, inspect the existing "/frontend" code and understand what UI is already implemented. Do NOT rebuild the entire UI from scratch. Keep the existing design and add only the missing functionality/components needed for this flow.
+
+The main missing UI/functionality is the manual headshot timestamp bar system, the headshot timestamp list with delete buttons, the maximum-gap control, and the patcher/patchless selection.
+
+==================================================
+
+1. MANUAL HEADSHOT TIMESTAMP SYSTEM
+   ==================================================
+
+The user uploads/loads a video into the Headshot Lab.
+
+The user manually identifies every headshot by placing a bar on the video timeline.
+
+Each bar represents ONE headshot timestamp.
+
+Example:
+
+Video duration: 30 seconds
+
+User places bars at:
+
+3.4s
+8.9s
+14.7s
+22.3s
+
+The frontend should maintain these timestamps as a list.
+
+Example internal state:
+
+timestamps = [3.4, 8.9, 14.7, 22.3]
+
+These timestamps are what eventually get sent to the backend.
+
+Do NOT implement automatic headshot detection here. The user manually chooses the timestamps.
+
+==================================================
+2. BAR ↔ VIDEO SYNCHRONIZATION
+
+The manual bars must be interactive and synchronized with the video.
+
+A. VIDEO PLAYBACK → BAR GLOW
+
+As the video plays, the frontend should determine whether playback is currently at a marked headshot timestamp.
+
+When playback reaches a timestamp corresponding to a bar, that bar should visually glow/highlight.
+
+This is only an indicator.
+
+The video should continue playing normally.
+
+Example:
+
+Timestamp list:
+
+3.4s
+8.9s
+14.7s
+
+When video.currentTime is around 3.4s:
+
+The 3.4s bar becomes active/glowing.
+
+When playback moves to 8.9s:
+
+The 8.9s bar becomes active/glowing.
+
+This lets the user clearly see which marked headshot is currently being reached.
+
+Use a sensible small tolerance around the timestamp rather than requiring an impossible exact floating-point match.
+
+B. BAR DRAGGING → VIDEO SEEK
+
+The most important interaction is that when the user drags a bar along the timeline, the video should seek to that exact position.
+
+Example:
+
+Current bar:
+
+8.9 seconds
+
+User drags it to:
+
+12.6 seconds
+
+Immediately update:
+
+video.currentTime = 12.6
+
+The video preview should therefore show the frame at 12.6 seconds while the user moves the bar.
+
+This allows the user to precisely find the exact frame where a headshot happened.
+
+The bar position and video position must remain synchronized.
+
+The user should be able to:
+
+1. Grab a bar.
+2. Drag it left/right.
+3. Watch the video position change accordingly.
+4. Release it.
+5. Have the new timestamp saved in the timestamp list/state.
+
+Do not make the user manually type timestamps just to position a bar.
+
+==================================================
+3. TIMESTAMP LIST
+
+Every manual bar should also appear in a list.
+
+Example:
+
+HEADSHOTS
+
+00:03.40     X
+00:08.90     X
+00:14.70     X
+00:22.30     X
+
+Each list item corresponds to one actual timeline bar.
+
+The list and timeline must stay synchronized.
+
+If a bar moves:
+
+Timeline bar:
+8.9s → 12.6s
+
+The list must change:
+
+00:08.90 → 00:12.60
+
+If a list item is deleted, the corresponding timeline bar must also be deleted.
+
+==================================================
+4. INDIVIDUAL DELETE BUTTON
+
+Every headshot timestamp/list item needs its own small delete button, such as an X.
+
+Example:
+
+00:03.40  X
+00:08.90  X
+00:14.70  X
+
+If the user clicks X beside 00:08.90:
+
+1. Remove 8.9 from the timestamps state.
+2. Remove that specific bar from the timeline.
+3. Remove that item from the displayed list.
+
+The other timestamps must remain unchanged.
+
+Example:
+
+Before:
+[3.4, 8.9, 14.7, 22.3]
+
+Delete 8.9
+
+After:
+[3.4, 14.7, 22.3]
+
+==================================================
+5. TIMESTAMP VALIDATION
+
+Before sending the processing request, validate the timestamp list.
+
+The backend must NOT accept an empty headshot list.
+
+If the user has not added any bars:
+
+timestamps = []
+
+Reject/cancel the processing request.
+
+The frontend should tell the user something clear such as:
+
+"Add at least one headshot before exporting."
+
+The backend must also validate this independently. Do not rely only on frontend validation.
+
+Also validate that timestamps are:
+
+- Numeric
+- Not negative
+- Within the actual video duration
+- Not malformed
+
+The goal is to prevent someone from bypassing the frontend and sending invalid data directly to the API.
+
+==================================================
+6. MAXIMUM GAP CONTROL
+
+The Headshot Lab also needs a UI control for the maximum allowed gap between headshots.
+
+Example:
+
+Maximum gap:
+[ 10 ] seconds
+
+The user should be able to choose/change this value.
+
+This value is sent to the backend and determines how the processing script handles the intervals between headshots.
+
+IMPORTANT:
+
+There are TWO different processing modes.
+
+==================================================
+7. PATCHER MODE — patcher.py
+
+"patcher.py" is used when the user wants EVERY headshot interval to be exactly the selected duration.
+
+Example:
+
+Maximum gap / target gap = 10 seconds.
+
+If the timestamps imply:
+
+Headshot 1 → Headshot 2 = 5 seconds
+
+patcher.py must correct the video so the interval becomes:
+
+10 seconds
+
+If:
+
+Headshot 1 → Headshot 2 = 8 seconds
+
+it becomes:
+
+10 seconds
+
+If:
+
+Headshot 1 → Headshot 2 = 10 seconds
+
+it remains:
+
+10 seconds
+
+If:
+
+Headshot 1 → Headshot 2 = 15 seconds
+
+it must be corrected to the desired 10-second interval.
+
+The important rule for "patcher.py" is:
+
+EVERY interval must become exactly the selected gap.
+
+Do not rewrite or replace "patcher.py" unless necessary. Inspect the existing implementation and integrate with it.
+
+==================================================
+8. PATCHLESS MODE — patchless.py
+
+"patchless.py" is DIFFERENT.
+
+It does NOT force every interval to equal the selected duration.
+
+Instead, it only ensures that the gap DOES NOT EXCEED the selected maximum.
+
+Example:
+
+Maximum gap = 10 seconds.
+
+If gap is:
+
+5 seconds → leave it as 5 seconds.
+
+8 seconds → leave it as 8 seconds.
+
+10 seconds → leave it as 10 seconds.
+
+14 seconds → correct it down to 10 seconds.
+
+20 seconds → correct it down so the maximum interval is 10 seconds.
+
+The rule for "patchless.py" is:
+
+GAP <= MAXIMUM GAP
+
+It should not unnecessarily modify gaps that are already within the allowed maximum.
+
+==================================================
+9. PATCHER / PATCHLESS UI
+
+The UI needs a simple way for the user to choose between these two behaviors.
+
+Do not overcomplicate this.
+
+A simple toggle is acceptable:
+
+Patch gaps:
+[ ON / OFF ]
+
+OR an equivalent two-option control:
+
+○ Exact gap
+○ Maximum gap
+
+The behavior should be obvious.
+
+Recommended meaning:
+
+PATCH ON:
+Use "patcher.py".
+
+Every interval must become exactly the selected duration.
+
+PATCH OFF:
+Use "patchless.py".
+
+Only intervals greater than the selected maximum are corrected.
+
+Example UI:
+
+Maximum gap
+[ 10 ] seconds
+
+Patch gaps
+[ ON ]
+
+When ON:
+→ patcher.py
+
+When OFF:
+→ patchless.py
+
+Keep the existing UI's visual style. Do not introduce unnecessary cards, gradients, redesigns, or unrelated components.
+
+==================================================
+10. FRONTEND → BACKEND PROCESSING REQUEST
+
+When the user presses Export/Process, the frontend should send:
+
+- The uploaded video
+- The manually selected headshot timestamps
+- The selected maximum/target gap
+- Whether patch mode is enabled
+
+Conceptually:
+
+{
+timestamps: [3.4, 8.9, 14.7, 22.3],
+max_gap: 10,
+patch: true
+}
+
+The exact request format should match the existing backend architecture.
+
+If:
+
+patch = true
+
+the backend uses:
+
+patcher.py
+
+If:
+
+patch = false
+
+the backend uses:
+
+patchless.py
+
+==================================================
+11. JWT AUTHENTICATION + USER IDENTIFICATION
+
+Before ANY video processing starts, the backend must authenticate the user.
+
+There is already a file responsible for JWT decoding.
+
+Use the existing JWT decoding/security implementation.
+
+The processing endpoint should:
+
+1. Receive the authenticated request.
+2. Decode the JWT.
+3. Get the user's ID.
+4. Use that ID to identify the user in the database.
+5. Check the user's credits.
+6. Only then allow processing to begin.
+
+Do NOT process the video before the credit check.
+
+==================================================
+12. CREDIT REQUIREMENT
+
+Every successful video export costs:
+
+2 credits.
+
+This is the default processing deduction.
+
+Before processing starts:
+
+user.credits >= 2
+
+must be true.
+
+If the user has:
+
+0 credits → reject.
+
+1 credit → reject.
+
+2 credits → allow.
+
+3+ credits → allow.
+
+The request must be rejected BEFORE expensive video processing begins if the user does not have at least 2 credits.
+
+Example error:
+
+"Insufficient credits. You need at least 2 credits to process this video."
+
+Do not deduct anything at this stage.
+
+==================================================
+13. CREDIT DEDUCTION TIMING
+
+The 2-credit deduction happens ONLY after the video export succeeds.
+
+Correct:
+
+JWT
+↓
+Find user
+↓
+Check credits >= 2
+↓
+Process video
+↓
+Export succeeds
+↓
+Deduct 2 credits
+↓
+Return completed result
+
+Incorrect:
+
+JWT
+↓
+Deduct credits
+↓
+Process
+↓
+FFmpeg fails
+
+We do NOT want users losing credits for failed exports.
+
+If processing fails, the 2 credits should not be deducted.
+
+Also make the actual deduction safe against simultaneous requests. Two requests arriving at the same time must not both be allowed to spend the same 2 credits.
+
+==================================================
+14. VIDEO STORAGE
+
+Do NOT use a fixed output name such as:
+
+output.mp4
+
+because multiple users and multiple processing requests would overwrite each other.
+
+Generate a unique filename for each output.
+
+A UUID can be used for this.
+
+Example:
+
+8f3c2a1e-....mp4
+
+The important point for this MVP is simply that every output has a unique filename.
+
+The frontend does NOT need to receive a complicated object or signed URL at this stage.
+
+After successful processing, the backend can return the filename.
+
+Example:
+
+{
+"status": "completed",
+"filename": "8f3c2a1e-....mp4"
+}
+
+The frontend stores that filename.
+
+==================================================
+15. PROCESSING RESPONSE / PROGRESS
+
+The processing request should communicate progress to the frontend.
+
+The frontend should receive progress as processing advances.
+
+Example:
+
+25%
+50%
+75%
+100%
+
+The exact streaming/SSE implementation should follow the existing project architecture.
+
+Do not load the entire video into RAM simply to provide progress.
+
+==================================================
+16. COMPLETED VIDEO RETRIEVAL
+
+After processing is complete:
+
+Backend sends the finished filename.
+
+Frontend stores the filename.
+
+Then the frontend automatically makes another GET request using that filename.
+
+Conceptually:
+
+POST /process
+↓
+processing + progress
+↓
+filename returned
+↓
+frontend stores filename
+↓
+GET /video/{filename}
+↓
+backend streams finished MP4
+↓
+frontend plays/displays it
+
+The user specifically wants this simple two-step approach.
+
+Do NOT turn this into a complicated job-management system unless the existing project absolutely requires it.
+
+==================================================
+17. VIDEO STREAMING
+
+The finished video must be streamed in chunks.
+
+Do NOT load a 500 MB, 1 GB, or larger video completely into Python RAM.
+
+The architecture should be:
+
+Disk
+↓
+small chunk
+↓
+response
+↓
+small chunk
+↓
+response
+↓
+small chunk
+↓
+...
+↓
+Frontend
+
+For FastAPI, use an appropriate streaming response mechanism.
+
+The output video remains on disk, and the backend reads/streams it progressively.
+
+The same principle applies to uploads: avoid unnecessarily loading the entire large video into RAM.
+
+FFmpeg should process the video from disk rather than requiring the entire video to be loaded into Python memory.
+
+==================================================
+18. OVERALL FLOW
+
+The complete Headshot Lab flow is:
+
+USER
+↓
+Loads/uploads video
+↓
+Frontend displays video + timeline
+↓
+User adds manual headshot bars
+↓
+Each bar corresponds to a timestamp
+↓
+Bars appear in timestamp list
+↓
+Each timestamp has its own X delete button
+↓
+Dragging a bar seeks the video to that position
+↓
+Video playback causes the corresponding bar to glow
+↓
+User selects maximum gap
+↓
+User selects Patch ON/OFF
+↓
+User presses Export
+↓
+Frontend sends video + timestamps + gap + patch mode
+↓
+BACKEND
+↓
+Decode JWT
+↓
+Get user ID
+↓
+Find user
+↓
+Check credits >= 2
+↓
+Check timestamps are not empty
+↓
+Validate timestamps
+↓
+Save/process video from disk
+↓
+If patch = ON:
+use patcher.py
+↓
+If patch = OFF:
+use patchless.py
+↓
+Processing progress is streamed to frontend
+↓
+Export succeeds
+↓
+Deduct exactly 2 credits
+↓
+Return unique output filename
+↓
+FRONTEND
+↓
+Store filename
+↓
+Automatically GET the filename
+↓
+BACKEND streams output video in chunks
+↓
+FRONTEND plays finished video
+
+==================================================
+19. IMPORTANT IMPLEMENTATION RULES
+
+1. Inspect the existing "/frontend" before modifying it.
+
+2. Do not rebuild existing UI unnecessarily.
+
+3. Add the missing manual timeline bars and timestamp list functionality.
+
+4. Every bar must have an independent delete button.
+
+5. Dragging a bar must update "video.currentTime".
+
+6. Video playback must visually activate/glow the corresponding bar.
+
+7. The timestamp list must always match the actual bars.
+
+8. Empty timestamp lists must be rejected.
+
+9. Backend must validate the timestamps too.
+
+10. Decode JWT before processing.
+
+11. Identify the user from the JWT.
+
+12. Check credits >= 2 BEFORE processing.
+
+13. Deduct exactly 2 credits ONLY after successful export.
+
+14. Failed processing must not consume the 2 credits.
+
+15. Use "patcher.py" when Patch is ON.
+
+16. Use "patchless.py" when Patch is OFF.
+
+17. "patcher.py" means every interval should become exactly the selected duration.
+
+18. "patchless.py" means intervals below/equal to the maximum stay unchanged; only intervals exceeding the maximum are corrected.
+
+19. Do not use a fixed "output.mp4".
+
+20. Give each output a unique filename.
+
+21. Return the finished filename to the frontend.
+
+22. Frontend then makes a GET request for that filename.
+
+23. Stream the finished video in chunks.
+
+24. Do not load a 1 GB video completely into RAM.
+
+25. Keep the implementation focused on the current MVP. Do not introduce unnecessary architecture or features.
+
+==================================================
+FINAL GOAL
+
+The goal is a simple, reliable Jahvi Headshot Lab:
+
+MANUAL BARS
+→ PRECISE TIMESTAMP SELECTION
+→ DELETE INDIVIDUAL HEADSHOTS
+→ VIDEO/BAR SYNCHRONIZATION
+→ MAXIMUM GAP CONTROL
+→ PATCHER OR PATCHLESS MODE
+→ JWT AUTH
+→ CREDIT CHECK
+→ VIDEO PROCESSING
+→ SUCCESSFUL EXPORT
+→ -2 CREDITS
+→ UNIQUE FILENAME
+→ CHUNKED VIDEO STREAMING
+
+First inspect the existing codebase and determine exactly what is already implemented. Then make the smallest clean changes necessary to complete this flow. remember minimal , debuggable codes pls
+
+
+
+also make a py file for /me
+that decodes jwt then check user id and fill the ui with things like credit, that bar Orange one the logic is in its js and make a way to show user their plan eg pro depending on what db respond with

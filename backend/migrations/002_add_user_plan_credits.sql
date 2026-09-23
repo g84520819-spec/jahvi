@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    full_name VARCHAR(120) NOT NULL,
+    phone VARCHAR(20) NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL
+);
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 10,
+    ADD COLUMN IF NOT EXISTS plan VARCHAR(20) NOT NULL DEFAULT 'pro';
+
+UPDATE users
+SET credits = 10,
+    plan = 'pro'
+WHERE credits IS NULL
+   OR plan IS NULL;

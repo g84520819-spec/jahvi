@@ -1,0 +1,737 @@
+JAHVI PROJECT GUIDE
+===================
+
+Purpose
+-------
+Jahvi is a video editing application with a vanilla HTML/CSS/JavaScript frontend
+and a FastAPI/Python backend. The two main editing workflows are:
+
+1. Headshot Extraction Lab
+   Builds a highlight reel from manually selected headshot timestamps. It can
+   use either patchless mode or patched/exact-gap mode.
+
+2. BeatSync Lab
+   Takes a full uploaded video, optional custom music, manually selected
+   headshot timestamps, and selected effects. Librosa detects music beats.
+   FFmpeg then retimes video sections so headshots land on beats. The selected
+   effect is applied on the final synchronized timeline for 0.4 seconds from
+   each beat, and audio is finalized afterward.
+
+The project intentionally does not use React, a frontend build system, Celery,
+Redis, or a database-backed job queue. Processing is synchronous inside a
+FastAPI streaming response that sends Server-Sent Events (SSE) progress lines.
+
+Quick Start
+-----------
+Requirements:
+
+- Python with the dependencies in backend/requirements.txt
+- PostgreSQL
+- DATABASE_URL environment variable pointing to PostgreSQL
+- JWT_SECRET environment variable
+- ffmpeg and ffprobe installed and available on PATH
+- A browser or static HTTP server for the frontend
+
+From the repository root:
+
+    python -m pip install -r backend/requirements.txt
+    python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
+
+In another terminal:
+
+    python -m http.server 5000 --directory frontend
+
+Open:
+
+    http://localhost:5000
+
+The frontend api_config.js calculates the backend URL. On localhost it points
+to port 8000. In GitHub Codespaces/forwarded environments it derives the
+backend forwarded host. Do not hardcode a different backend URL in individual
+frontend pages.
+
+Environment:
+
+- DATABASE_URL: required PostgreSQL SQLAlchemy connection URL
+- JWT_SECRET: required by jwt_handler.py for token signing
+- JAHVI_OUTPUT_DIR: optional. The backend stores finished files in
+  <JAHVI_OUTPUT_DIR>/jahvi_outputs. If omitted, the system temp directory is
+  used.
+
+External tools:
+
+    ffmpeg -version
+    ffprobe -version
+
+FFmpeg is used for extraction, filtering, segment retiming, concatenation,
+audio extraction, audio mixing, ratio conversion, and final media output.
+
+Repository Layout
+-----------------
+
+README.md
+    Short setup instructions and the distinction between patchless.py and
+    patcher.py.
+
+backend/main.py
+    FastAPI application entrypoint. Registers middleware, startup database
+    initialization, and all routers.
+
+backend/database.py
+    SQLAlchemy engine/session setup, ORM models, migrations, and default effect
+    seeding.
+
+backend/jwt_handler.py
+    JWT access/refresh token creation and decoding.
+
+backend/signup.py
+    Signup validation, Argon2 password hashing, signup rate limiting, device
+    ID issuance, and initial token cookies.
+
+backend/login.py
+    Login, refresh, and logout routes. Verifies Argon2 hashes and manages
+    HttpOnly access/refresh cookies.
+
+backend/me.py
+    Authentication dependency and the /api/me account route.
+
+backend/upload_limits.py
+    Plan upload limits, chunked upload saving, credit cost, and row locking for
+    credit checks.
+
+backend/extraction.py
+    Headshot Extraction Lab route. Chooses patchless.py or patcher.py and
+    streams progress while rendering a highlight reel.
+
+backend/patchless.py
+    Extraction mode that cuts [headshot_timestamp, timestamp + gap]. It does not
+    borrow footage to fill a short final clip.
+
+backend/patcher.py
+    Extraction mode that tries to make every headshot clip the requested gap.
+    It borrows footage from unused natural gaps and can reuse footage when
+    necessary.
+
+backend/dashboard.py
+    Shared dashboard/effect logic. Provides effect category/class routes,
+    dashboard generation, FFmpeg Stage 2 effect application, output streaming,
+    and the selected-effect database lookup. BeatSync reuses its effect helper.
+
+backend/beatsync.py
+    BeatSync API route and orchestration. Handles uploads, beat analysis,
+    synchronization, effect application, audio mixing, cleanup, SSE progress,
+    and credit deduction.
+
+backend/rms.py
+    Existing Librosa/RMS audio analysis. Exposes detect_beats() for BeatSync
+    and find_headshot_moments() for impact/headshot-style audio moments.
+
+backend/timestamp_sync.py
+    The BeatSync video synchronization engine. It uses ffprobe and FFmpeg to
+    split/retime/concatenate the actual video. It is not just a timestamp list
+    transformer.
+
+backend/cleanup.py
+    Deletes output files through background tasks after a video response.
+
+backend/migrations/*.sql
+    Versioned PostgreSQL schema migrations.
+
+frontend/api_config.js
+    Computes window.JAHVI_API_BASE_URL.
+
+frontend/auth_ui.js
+    Shared frontend auth/account UI helper. Loads /api/me, updates name,
+    avatar, credits, and plan, and validates file sizes and client-side credits.
+
+frontend/login.html, frontend/signup.html
+    Authentication pages.
+
+frontend/login.js, frontend/signup.js
+    Login/signup form behavior and API calls. signup.js obtains/caches a device
+    ID before signup.
+
+frontend/dashboard.html, dashboard.css, dashboard.js
+    Dashboard/editor UI and dashboard generation workflow.
+
+frontend/headshot_extraction_lab.html, headshot_extraction_lab.css,
+frontend/headshot_extraction_lab.js
+    Headshot Extraction Lab UI. Sends video, timestamps, max gap, ratio, and
+    patch mode to /api/extract.
+
+frontend/beat_sync_lab.html, beat_sync_lab.css, beat_sync_lab.js
+    BeatSync UI. Sends video, optional custom audio/video, timestamps, selected
+    effect IDs, ratio, and music volume to /api/beatsync. The existing visual
+    design is intentionally preserved.
+
+frontend/timeline.js and timeline.css
+    Timeline bars used by BeatSync. Users add, drag, seek, and delete timestamp
+    bars. Timestamps are sent as seconds in ascending order by the backend.
+
+frontend/script.js and styles.css
+    Landing page behavior and shared landing styles.
+
+Frontend Request Flow
+---------------------
+
+Every authenticated page loads api_config.js before auth_ui.js and page logic.
+The shared backend URL is window.JAHVI_API_BASE_URL. Requests use
+credentials: 'include' so cookies are sent.
+
+Authentication initialization must happen before authenticated effect requests.
+BeatSync now does:
+
+    window.JahviAuth.initialize()
+      .then(() => loadEffectCategories())
+
+This order matters. /api/effects requires authentication. Loading effects before
+/me/auth initialization can result in a 401 and an empty effect panel.
+
+The BeatSync page also uses window.JAHVI_API_BASE_URL rather than an empty
+hardcoded API base, so it works with the same localhost/Codespaces routing as
+other pages.
+
+API Routes
+----------
+
+Authentication routes are under /auth.
+Account and processing routes are under /api.
+
+POST /auth/signup
+    JSON body:
+
+        {
+          "full_name": "User Name",
+          "phone": "+2348012345678",
+          "password": "password1",
+          "device_id": "cached-device-id"
+        }
+
+    Validates full name, E.164-style phone number, password length/content, and
+    device ID. Passwords are hashed with Argon2. A User is created with the
+    default credits and plan. Successful signups are limited to three per IP
+    and three per device. Postgres advisory locks protect the concurrent count.
+    Sets HttpOnly refresh_token and access_token cookies.
+
+GET /auth/device-id
+    Returns a cryptographically random device_id for the frontend to cache.
+
+POST /auth/login
+    JSON body:
+
+        {"phone": "+2348012345678", "password": "password1"}
+
+    Verifies the phone and Argon2 password hash. Sets access and refresh
+    cookies. Returns user data and token metadata.
+
+POST /auth/refresh
+    Reads the refresh_token cookie, validates it as a refresh JWT, looks up the
+    user, rotates both tokens, and returns user data.
+
+POST /auth/logout
+    Deletes access_token and refresh_token cookies. Returns 204.
+
+GET /api/me
+    Requires an access JWT from the Authorization bearer header or access_token
+    cookie. Returns id, full_name, phone, credits, and plan.
+
+GET /health
+    Returns {"status": "ok"}. Does not require authentication.
+
+GET /api/effects/categories
+    Returns the seeded effect categories: Cinematic, Phonk, Rage, and Snap.
+    This route itself does not require a user dependency.
+
+GET /api/effects?category=<category>
+    Requires authentication. Returns effect classes available for the current
+    user's plan. Each effect has class_id, name, and states. The route filters
+    out effects whose plan does not match the user's plan.
+
+POST /api/extract
+    Requires authentication and at least CREDIT_COST credits.
+    Multipart form fields:
+
+    - video: uploaded video file
+    - headshot_timestamps: JSON array string, e.g. [2.15, 4.8, 7.3]
+    - max_gap: requested seconds per headshot clip, default 5.0, range > 0 to 300
+    - ratio: 16:9, 9:16, or 1:1
+    - patch: false for patchless mode, true for patched/exact-gap mode
+
+    Returns an SSE stream. On success it sends a completed event containing a
+    filename. The output is later fetched from /api/video/{filename}.
+
+POST /api/generate
+    Dashboard generation route. Requires authentication and credits.
+    Multipart form fields:
+
+    - video
+    - headshot_timestamps: JSON array string
+    - effect_class_ids: JSON array string of database IDs
+    - ratio: 16:9, 9:16, or 1:1
+    - gap_mode: normal, maximum, or exact
+    - gap_value: used for maximum/exact, from 0.5 to 10 seconds
+
+    It applies dashboard Stage 2 effects, then optionally builds a patcher or
+    patchless highlight depending on gap_mode. It returns SSE progress and a
+    final output filename.
+
+POST /api/beatsync
+    Requires authentication and at least two credits. Multipart form fields:
+
+    - video: required video upload
+    - custom_audio: optional audio or video upload used as music
+    - headshot_timestamps: JSON array string of video headshot seconds
+    - effect_class_ids: JSON array string of effect database IDs
+    - ratio: 16:9, 9:16, or 1:1; currently validated by BeatSync
+    - music_volume: number from 0 to 1, default 1.0
+
+    Returns an SSE stream with progress/error/completed events. The completed
+    event contains a filename.
+
+GET /api/video/{filename}
+    Requires authentication. Only plain .mp4 filenames are allowed. Serves a
+    finished output with FileResponse and schedules deletion through a
+    background task. Outputs are intentionally temporary.
+
+Authentication Details
+----------------------
+
+get_current_user in me.py accepts either:
+
+- Authorization: Bearer <access JWT>
+- access_token cookie
+
+The access JWT must have an access token type and a numeric user ID subject.
+The user is loaded from PostgreSQL on every protected request.
+
+The refresh token is HttpOnly and normally lives under /auth. The access token
+is HttpOnly and lives under /. Local HTTP uses SameSite=Lax; HTTPS uses Secure
+and SameSite=None so cross-origin frontend/backend requests can work.
+
+Signup/login return user information in JSON, but the browser should rely on
+cookies for subsequent requests. The frontend uses credentials: include.
+
+Database and Credits
+--------------------
+
+SQLAlchemy requires PostgreSQL. database.py refuses non-PostgreSQL DATABASE_URL
+values.
+
+users:
+
+- id: integer primary key
+- full_name: required string
+- phone: unique required string
+- password_hash: Argon2 hash
+- credits: integer, default 10
+- plan: string, default pro
+
+signup_security:
+
+- id: UUID-like string primary key
+- ip_address
+- device_id
+- success boolean
+
+DashboardEffect:
+
+- id
+- category
+- name
+- plan
+- filter_1: FFmpeg global/base filter
+- filter_2: FFmpeg headshot filter
+
+init_db() creates missing tables, runs migrations, and seeds default effects.
+The migrations currently add/remove signup columns and add user plan/credits
+schema as defined by the SQL files.
+
+Credit behavior:
+
+- CREDIT_COST is 2.
+- require_processing_credits locks the user's database row with SELECT FOR
+  UPDATE and rejects users below two credits with HTTP 402.
+- Processing routes deduct credits only after successful output creation.
+- The deduction uses a conditional update requiring credits >= CREDIT_COST,
+  then commits.
+- The browser's credit check improves UX but is not trusted for authorization;
+  the backend performs the real check.
+
+Upload limits:
+
+- free: 300 MB
+- pro: 1 GB
+- proplus: 1.5 GB
+
+save_upload_in_chunks writes one-megabyte chunks to UUID-named files and stops
+when the user's plan limit is exceeded. Backend extension checks also prevent
+unexpected formats.
+
+Headshot Extraction Pipeline
+----------------------------
+
+Frontend:
+
+1. User uploads a video.
+2. User adds or drags timeline bars.
+3. User chooses maximum gap or exact gap mode.
+4. headshot_extraction_lab.js sends the form to /api/extract.
+
+Backend:
+
+1. Authenticate the user and lock/check credits.
+2. Require FFmpeg and ffprobe.
+3. Save the upload in chunks with a UUID filename.
+4. Read duration and ensure every timestamp is inside the video.
+5. Select patchless.py when patch is false, or patcher.py when patch is true.
+6. Render in a worker thread while emitting SSE progress.
+7. Deduct two credits after successful rendering.
+8. Delete the temporary source. The final output remains until fetched.
+
+patchless.py:
+
+- For each timestamp, cuts from timestamp to timestamp + gap, clipped to the
+  video duration.
+- A final clip can be shorter if the video ends.
+- It does not borrow or add footage from elsewhere.
+- It concatenates the clips and applies a center crop/scale for the ratio.
+
+patcher.py:
+
+- Starts each clip at the headshot timestamp.
+- If the clip does not have the requested duration, calculates a deficit.
+- Finds unused natural gaps in the original video.
+- Adds footage from those gaps to fill the deficit when possible.
+- Reuse of footage is allowed.
+- Concatenates each headshot clip, then all clips, and applies ratio output.
+
+Dashboard Effect Pipeline
+-------------------------
+
+Dashboard effects come from DashboardEffect database rows. The selected effect
+is checked against the user's plan. If multiple valid IDs are posted, the
+current helper chooses one valid effect randomly.
+
+_apply_stage_2_effects() builds an FFmpeg filter graph from:
+
+- filter_1 as the base/global filter
+- filter_2 as the headshot filter
+- between(t,start,end) expressions for timestamp windows
+
+The current effect helper accepts effect_duration, defaulting to one second.
+BeatSync passes 0.4 seconds so a BeatSync effect window is [beat, beat + 0.4].
+
+The dashboard's own protected timestamp convention is separate. Dashboard code
+may calculate timestamp + 0.4 before passing protected boundaries into its
+highlight stage. That convention protects a dashboard highlight effect from
+being cut away. It must not be confused with BeatSync beat alignment.
+
+BeatSync Pipeline
+-----------------
+
+The intended BeatSync contract is:
+
+    user video + custom music + headshot timestamps
+        -> Librosa beat detection
+        -> video timing synchronization
+        -> effect at final beat positions for 0.4 seconds
+        -> audio finalization
+        -> output MP4
+
+Exact current order in backend/beatsync.py:
+
+1. FastAPI resolves get_current_user and get_db.
+2. require_processing_credits locks the user and confirms at least two credits.
+3. FFmpeg and ffprobe availability is checked.
+4. Video content type, ratio, and music_volume are validated.
+5. Headshot timestamps are parsed as a non-empty numeric JSON array.
+6. Effect IDs are parsed as a non-empty JSON array of integer IDs.
+7. The video is saved to a UUID/chunked temporary file.
+8. If no custom audio is supplied, the source video must have an audio stream.
+   If custom audio is supplied, a silent source video is allowed.
+9. The selected plan-allowed DashboardEffect is loaded.
+10. If custom_audio is present, it is saved to another UUID/chunked temporary
+    file. It can be an audio file or a video containing an audio stream.
+11. If the analysis source is a video, FFmpeg extracts its audio to a temporary
+    MP3. Otherwise the uploaded audio file is analyzed directly.
+12. rms.detect_beats() uses Librosa to load the analysis audio, separate its
+    percussive layer with HPSS, run beat_track(), convert beat frames to seconds,
+    and return sorted unique non-negative beat times.
+13. If no beats are detected, processing fails and no credit is deducted.
+14. timestamp_sync.synchronize_video() receives the actual source video, raw
+    headshot timestamps, beat timestamps, and an output path.
+15. timestamp_sync.py reads video duration using ffprobe and validates finite,
+    non-negative, in-range headshot times.
+16. Beat timestamps are normalized, sorted, deduplicated, and validated.
+17. Ordered headshots are paired with ordered beats. If there are more beats
+    than headshots, the headshot list is cycled deterministically. If there are
+    fewer beats, only the needed ordered headshots are used.
+18. FFmpeg segments are generated around each pair. Video PTS is adjusted so
+    the selected source headshot moment lands at the target beat time. Audio is
+    retimed with an atempo chain when the source has audio.
+19. Silent source videos are supported by producing video-only synchronized
+    segments.
+20. Remaining tail footage is appended after the synchronized segments.
+21. Segments are concatenated with FFmpeg into synced.mp4.
+22. The selected effect is applied to synced.mp4, not to the pre-synchronized
+    source. This is important because the final beat positions are now known.
+23. For each final beat, the effect filter is enabled from beat to beat + 0.4
+    seconds. Example: beat 5.000 creates between(t,5.000,5.400).
+24. If custom music exists, audio is extracted from a custom uploaded video if
+    necessary, then FFmpeg mixes it into the effected synchronized video.
+25. If the source video has original audio, it is mixed with the custom music.
+26. If the source video is silent, custom music becomes the output audio.
+27. If no custom music is uploaded, original source audio survives synchronization
+    and effect rendering when the source had audio.
+28. The final output is verified to exist and be non-empty.
+29. Only after this verification does the backend conditionally deduct two credits
+    and commit the database transaction.
+30. The SSE completed event returns the temporary output filename.
+31. Temporary source, analysis, synchronized, effect, and extracted music files
+    are removed. The final output is removed on failure and later removed after
+    /api/video/{filename} serves it.
+
+The central timing rule is:
+
+    target beat = 5.000 seconds
+    headshot lands = approximately 5.000 seconds
+    effect protection = 5.000 through 5.400 seconds
+
+The 0.4 seconds is a protection/display duration, not an offset to the beat.
+Do not change the target to 5.4 or subtract 0.4 from the beat. Doing so would
+make the headshot miss the beat. Synchronization finishes first; the effect is
+then applied on the final timeline for 0.4 seconds.
+
+BeatSync Audio Rules
+--------------------
+
+No custom upload:
+
+    final video = synchronized/effected video
+    final audio = original video audio, if present
+
+Custom audio uploaded:
+
+    final video = synchronized/effected video
+    final audio = original video audio mixed with custom audio, if original
+                  audio exists
+
+Silent source video plus custom audio:
+
+    final video = synchronized/effected video
+    final audio = custom audio only
+
+Custom audio as a video:
+
+    FFmpeg extracts its audio stream to a temporary MP3 for Librosa analysis
+    and again as needed for final mixing.
+
+The custom music volume controls only the custom music input. The current
+mixing filter uses amix with duration=first, so the mixed audio follows the
+first/video stream duration rather than extending the video indefinitely.
+
+BeatSync Frontend Behavior
+--------------------------
+
+beat_sync_lab.html provides:
+
+- one video upload
+- video preview
+- timeline bars for headshot moments
+- effect category/effect class selection
+- optional audio/video upload for custom music
+- music volume slider from 0 to 100 percent
+- export ratio buttons
+- progress preview and result video
+
+beat_sync_lab.js stores:
+
+- videoFile
+- audioFile
+- selectedEffectClassIds
+- exportRatio, default 9:16
+- musicVolume, default 1.0
+
+Before generating, the page requires a video, at least one selected effect,
+and at least one timeline timestamp. It calls JahviAuth.validateProcessingFiles
+for sign-in, client-side credit, and client-side upload-size feedback.
+The backend repeats all security and validation checks.
+
+FormData posted to /api/beatsync:
+
+    video = video file
+    headshot_timestamps = JSON.stringify(JahviTimeline.getTimestamps())
+    effect_class_ids = JSON.stringify(selected effect IDs)
+    ratio = selected ratio
+    music_volume = string representation of 0..1
+    custom_audio = optional audio/video file
+
+The page reads SSE lines in the form:
+
+    data: {"event":"progress", ...}
+    data: {"event":"completed", "filename":"..."}
+    data: {"event":"error", "message":"..."}
+
+After completed, it fetches /api/video/{filename}, creates a Blob URL, and shows
+the result in the preview video element. The output endpoint is temporary and
+may delete the file after serving it.
+
+Important Separation of Responsibilities
+----------------------------------------
+
+FastAPI routes:
+
+- authentication dependency resolution
+- request validation
+- upload handling
+- user/plan/credit checks
+- orchestration and SSE
+- final output filename
+
+Database:
+
+- users
+- plans
+- credits
+- dashboard effects
+- signup security records
+
+rms.py / Librosa:
+
+- audio loading
+- percussive separation
+- beat detection
+- timestamp generation from audio
+
+Do not put video editing logic into rms.py.
+
+ timestamp_sync.py:
+
+- video duration reading
+- timestamp validation
+- source/beat pairing
+- FFmpeg timing changes
+- segment generation
+- segment concatenation
+- tail handling
+
+Do not reduce timestamp_sync.py to returning timestamps.
+
+FFmpeg:
+
+- actual video/audio transformation
+- filters
+- retiming
+- cuts
+- concatenation
+- audio extraction/mixing
+
+Frontend:
+
+- user input
+- timestamp selection
+- effect selection
+- upload and progress display
+- result preview/download behavior
+
+Known Boundaries and Caveats
+----------------------------
+
+1. BeatSync ratio is currently accepted and validated but the current BeatSync
+   route does not apply a crop/scale transform based on it. The extraction and
+   dashboard highlight builders do apply ratio output. If BeatSync ratio output
+   is required, add a focused final ratio stage without redesigning the UI.
+
+2. The existing patcher.py and patchless.py are highlight-reel builders. They are
+   not inserted into the full-video BeatSync route. BeatSync's own
+   timestamp_sync.py handles retiming, repetition, and tail footage.
+
+3. Beat detection can fail for silent, corrupt, unsupported, or beatless audio.
+   The route emits an SSE error and does not deduct credits.
+
+4. FFmpeg failures are surfaced as errors. The route removes the failed output
+   and rolls back the database session.
+
+5. Output files are temporary. /api/video/{filename} schedules deletion after
+   serving. Do not treat the output directory as permanent storage.
+
+6. The project currently has no comprehensive automated pytest suite in the
+   repository. The important manual/fixture scenarios to cover are:
+
+   - five headshots and five beats
+   - three headshots and many beats
+   - many headshots and fewer beats
+   - one headshot
+   - no headshots
+   - no detected beats
+   - out-of-order timestamps
+   - invalid timestamps
+   - video longer than music
+   - music longer than video
+   - simultaneous users/files
+   - FFmpeg failure
+   - Librosa failure
+   - insufficient credits
+   - successful output and exactly one credit deduction cost of two
+
+7. Keep the frontend visual design intact unless a backend contract requires a
+   minimal connection fix. BeatSync's previous connection fixes were limited to
+   using the shared API base and waiting for authentication before effect loads.
+
+Validation History
+------------------
+
+The BeatSync implementation has been checked with:
+
+- Python syntax compilation for modified backend modules
+- JavaScript syntax checking for beat_sync_lab.js
+- generated FFmpeg audio/video synchronization smoke tests
+- silent-video synchronization checks
+- malformed timestamp and empty input checks
+- deterministic extra-beat pairing checks
+- generated FFmpeg effect output checks
+- exact 0.4-second filter-window checks
+- git diff whitespace validation
+
+When changing the pipeline, preserve these invariants:
+
+- effects are selected from database rows allowed by the user's plan
+- credits are checked server-side and deducted only after success
+- temporary filenames are UUID-based
+- uploads are streamed to disk in chunks
+- no entire video is loaded into RAM by application code
+- Librosa remains the single BeatSync beat detector
+- timestamp_sync.py performs actual video synchronization
+- original audio is preserved when no custom music is selected
+- custom audio is mixed after synchronization/effect processing
+- the frontend is not redesigned for backend changes
+
+Recommended Reading Order for a New Agent
+-----------------------------------------
+
+1. This PROJECT_GUIDE.txt
+2. backend/main.py
+3. backend/beatsync.py
+4. backend/timestamp_sync.py
+5. backend/rms.py
+6. backend/dashboard.py
+7. backend/database.py
+8. backend/upload_limits.py
+9. frontend/beat_sync_lab.html
+10. frontend/beat_sync_lab.js
+11. frontend/timeline.js
+12. backend/extraction.py
+13. backend/patcher.py and backend/patchless.py
+14. backend/login.py, signup.py, me.py, and jwt_handler.py
+
+The most important BeatSync requirement is:
+
+    USER HEADSHOT TIMESTAMPS + MUSIC BEATS
+        -> ACTUAL VIDEO TIMING ALIGNMENT
+        -> EFFECT AT FINAL BEATS FOR 0.4 SECONDS
+        -> ORIGINAL/CUSTOM AUDIO FINALIZATION
+        -> VERIFIED MP4
+
+Do not replace this with a timestamp-only function, a fake progress system,
+a global time shift, a second beat detector, or a separate authentication
+system.

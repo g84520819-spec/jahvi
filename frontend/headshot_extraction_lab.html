@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jahvi — Headshot Extraction Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="headshot_extraction_lab.css">
+<link rel="stylesheet" href="timeline.css">
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="nav-overlay" id="navOverlay"></div>
+
+<div class="app-shell">
+
+  <!-- ================= Sidebar ================= -->
+  <nav class="side-panel" id="sidePanel">
+    <div class="side-logo">
+      <img src="icon/clipForge.png" alt="" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+      <span class="logo-mark" style="display:none;">J</span>
+      <span>Jahvi</span>
+    </div>
+
+    <a class="side-link" href="dashboard.html">← Back to Dashboard</a>
+    <a class="side-link" href="beat_sync_lab.html">Beat Sync Lab</a>
+
+    <a class="side-link logout" href="login.html">Log out</a>
+  </nav>
+
+  <!-- ================= Main ================= -->
+  <main class="main">
+
+    <!-- Header -->
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="topbar-logo">
+        <img src="icon/clipForge.png" alt="" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <span class="logo-mark" style="display:none;">J</span>
+        <span class="topbar-logo-text">Jahvi</span>
+      </div>
+      <div class="greeting">
+        <div class="greeting-eyebrow">Headshot Extraction Lab</div>
+        <div class="greeting-name" id="userName">Welcome back…</div>
+      </div>
+      <div class="avatar" id="userAvatar" aria-label="Your account">--</div>
+    </header>
+
+    <div class="top-row">
+      <div class="credits-card">
+        <div class="credits-info">
+          <div class="credits-label">Credits remaining · <span id="planLabel">Plan</span></div>
+          <div class="credits-count"><span id="creditsLeft">–</span></div>
+          <div class="credits-track"><div class="credits-fill" id="creditsFill"></div></div>
+        </div>
+        <button type="button" class="upgrade-btn">Upgrade to Pro</button>
+      </div>
+
+      <div class="page-identity">
+        <div class="page-identity-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>
+            <path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+          </svg>
+        </div>
+        <div>
+          <div class="page-identity-title">Headshot Extraction Lab</div>
+          <div class="page-identity-sub">Cuts your footage down to just the headshot moments</div>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="content-grid">
+
+      <!-- ============ Left column: workflow ============ -->
+      <div class="col-main">
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">01</span>Add your video</div>
+            <div class="section-hint" id="clipCount">0 / 1</div>
+          </div>
+
+          <div class="reel" id="reel">
+            <div class="clip-slot">
+              <div class="clip-box" data-index="0">1</div>
+              <div class="clip-label">Empty</div>
+            </div>
+          </div>
+
+          <div class="video-preview-card" id="videoPreviewCard" style="display:none;">
+            <video id="videoPreviewPlayer" class="video-preview-player" controls playsinline></video>
+            <div class="video-preview-actions">
+              <button type="button" class="preview-action-btn" id="replaceVideoBtn">Replace</button>
+              <button type="button" class="preview-action-btn preview-action-danger" id="deleteVideoBtn">Delete</button>
+            </div>
+          </div>
+
+          <input type="file" accept="video/*" class="clip-input" id="videoInput" data-index="0">
+
+          <div class="timeline-section" id="timelineSection">
+            <div class="timeline-toolbar">
+              <strong>Headshot timeline</strong>
+              <span class="timeline-time" id="timelineCurrentTime">0.00s</span>
+              <button class="timeline-add" id="addBarBtn" type="button" disabled>Add bar</button>
+            </div>
+            <div class="timeline-track" id="timelineTrack"><span class="timeline-empty" id="timelineEmpty">Add bars at headshot moments</span></div>
+            <ul class="timestamp-list" id="timestampList" aria-label="Headshot timestamps"></ul>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">02</span>Max gap between headshots</div>
+          </div>
+          <div class="section-caption">Trims long stretches of dead footage between headshots so the video stays tight. If the gap is already shorter than this, nothing gets cut.</div>
+
+          <div class="gap-grid" id="gapRow">
+            <button class="gap-btn" data-gap="3">3s</button>
+            <button class="gap-btn" data-gap="5">5s</button>
+            <button class="gap-btn" data-gap="10">10s</button>
+            <button class="gap-btn" data-gap="15">15s</button>
+          </div>
+
+          <div class="gap-custom-row">
+            <label for="customGapInput" class="gap-custom-label">Custom (seconds)</label>
+            <input type="number" id="customGapInput" class="gap-custom-input" min="1" placeholder="e.g. 7">
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">03</span>Gap behavior</div>
+          </div>
+          <div class="mode-toggle" role="group" aria-label="Gap behavior">
+            <button type="button" class="mode-btn active" data-patch="false">Maximum gap</button>
+            <button type="button" class="mode-btn" data-patch="true">Exact gap</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">04</span>Export ratio</div>
+          </div>
+          <div class="ratio-grid" id="ratioRow">
+
+            <button class="ratio-btn" data-ratio="9:16">
+              <span class="ratio-preview ratio-9-16"></span>
+              <span class="ratio-name">9:16</span>
+              <span class="ratio-sub">Reels / TikTok</span>
+            </button>
+
+            <button class="ratio-btn" data-ratio="1:1">
+              <span class="ratio-preview ratio-1-1"></span>
+              <span class="ratio-name">1:1</span>
+              <span class="ratio-sub">Square</span>
+            </button>
+
+            <button class="ratio-btn" data-ratio="16:9">
+              <span class="ratio-preview ratio-16-9"></span>
+              <span class="ratio-name">16:9</span>
+              <span class="ratio-sub">Widescreen</span>
+            </button>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ============ Right column: status + preview ============ -->
+      <div class="col-side">
+
+        <div class="section-head preview-head">
+          <div class="section-title">Preview</div>
+        </div>
+
+        <div class="preview-panel" id="previewPanel">
+
+          <div class="preview-idle" id="previewIdle">
+            <div class="preview-icon">▶</div>
+            <div class="preview-title">Nothing generated yet</div>
+            <div class="preview-sub">Add a video and set your max gap, then extract. Your headshot reel plays here.</div>
+            <div class="preview-error" id="previewError" style="display:none;"></div>
+          </div>
+
+          <div class="preview-processing" id="previewProcessing" style="display:none;">
+            <div class="circular-progress">
+              <svg viewBox="0 0 120 120">
+                <circle class="circle-bg" cx="60" cy="60" r="52"></circle>
+                <circle class="circle-fill" id="circleFill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <div class="circle-label" id="circleLabel">0%</div>
+            </div>
+            <div class="preview-title">Extracting headshots</div>
+            <div class="preview-sub" id="processingSub">This usually takes under a minute</div>
+          </div>
+
+          <video class="preview-video" id="previewVideo" style="display:none;" controls playsinline></video>
+
+        </div>
+
+        <!-- Small payoff stat shown once a video finishes generating -->
+        <div class="result-stat" id="resultStat" style="display:none;"></div>
+
+        <div class="side-cta">
+          <button class="cta-btn" id="generateBtnDesktop" disabled>Extract headshots</button>
+          <div class="cta-status" id="ctaStatusDesktop">Add a video to continue</div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div class="cta-bar">
+  <div class="cta-inner">
+    <button class="cta-btn" id="generateBtn" disabled>Extract headshots</button>
+    <div class="cta-status" id="ctaStatus">Add a video to continue</div>
+  </div>
+</div>
+
+<script src="api_config.js"></script>
+<script src="auth_ui.js"></script>
+<script src="timeline.js"></script>
+<script src="headshot_extraction_lab.js"></script>
+</body>
+</html>

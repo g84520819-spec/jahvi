@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jahvi — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="timeline.css">
+<link rel="stylesheet" href="effects.css">
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="app-shell">
+
+  <!-- ================= Main ================= -->
+  <main class="main">
+
+    <!-- Header -->
+    <header class="topbar">
+      <div class="topbar-logo">
+        <img src="icon/clipForge.png" alt="" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <span class="logo-mark" style="display:none;">J</span>
+        <span class="topbar-logo-text">Jahvi</span>
+      </div>
+      <div class="greeting">
+        <div class="greeting-eyebrow">Dashboard</div>
+        <!-- This text is just a placeholder. dashboard.js replaces it with the
+             real name once /api/me answers when the page loads. -->
+        <div class="greeting-name" id="userName">Welcome back…</div>
+      </div>
+      <div class="avatar" id="userAvatar" aria-label="Your account">--</div>
+      <button type="button" class="logout topbar-logout">Log out</button>
+    </header>
+
+    <!-- Top row: account status + our strongest feature, both get first look -->
+    <div class="top-row">
+      <div class="credits-card">
+        <div class="credits-info">
+          <div class="credits-label">Credits remaining</div>
+          <!-- Placeholder — dashboard.js fills this in from /api/me on page load,
+               and refreshes it after each generate. -->
+          <div class="credits-count"><span id="creditsLeft">–</span></div>
+          <div class="credits-track"><div class="credits-fill" id="creditsFill"></div></div>
+        </div>
+        <button type="button" class="upgrade-btn">Upgrade to Pro</button>
+      </div>
+
+      <div class="bsl-card" id="bslCard">
+        <div class="bsl-icon" data-icon="beatsync"></div>
+        <div class="bsl-text">
+          <div class="bsl-title">Beat Sync Lab</div>
+          <div class="bsl-sub">Auto beat-synced montages</div>
+        </div>
+        <div class="bsl-arrow">→</div>
+      </div>
+
+      <a href="headshot_extraction_lab.html" class="lab-nav-btn">
+        <p>Headshot Extraction Lab 🧪</p>
+      </a>
+    </div>
+
+
+    <div class="content-grid">
+
+      <!-- ============ Left column: workflow ============ -->
+      <div class="col-main">
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">01</span>Add your video</div>
+            <div class="section-hint" id="clipCount">0 / 1</div>
+          </div>
+
+          <!-- Empty state: just a tap-to-upload box -->
+          <div class="reel" id="reel">
+            <div class="clip-slot">
+              <div class="clip-box" data-index="0">1</div>
+              <div class="clip-label">Empty</div>
+            </div>
+          </div>
+
+          <!-- Filled state: real video preview + delete/replace buttons.
+               Hidden until a file is picked — dashboard.js toggles this. -->
+          <div class="video-preview-card" id="videoPreviewCard" style="display:none;">
+            <video id="videoPreviewPlayer" class="video-preview-player" controls playsinline></video>
+            <div class="video-preview-actions">
+              <button type="button" class="preview-action-btn" id="replaceVideoBtn">Replace</button>
+              <button type="button" class="preview-action-btn preview-action-danger" id="deleteVideoBtn">Delete</button>
+            </div>
+          </div>
+
+          <input type="file" accept="video/*" class="clip-input" id="videoInput" data-index="0">
+
+          <div class="timeline-section" id="timelineSection">
+            <div class="timeline-toolbar">
+              <strong>Headshot timeline</strong>
+              <span class="timeline-time" id="timelineCurrentTime">0.00s</span>
+              <button class="timeline-add" id="addBarBtn" type="button" disabled>Add bar</button>
+            </div>
+            <div class="timeline-track" id="timelineTrack"><span class="timeline-empty" id="timelineEmpty">Add bars at headshot moments</span></div>
+            <ul class="timestamp-list" id="timestampList" aria-label="Headshot timestamps"></ul>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">02</span>Choose effects</div>
+            <button class="effect-reload" id="reloadEffectsBtn" type="button">Reload effects</button>
+          </div>
+          <div class="effect-favorites-row" id="effectFavoritesRow"></div>
+          <div class="effect-picker-controls">
+            <input type="text" id="effectSearchInput" class="effect-search-input" placeholder="Search effects…" autocomplete="off" />
+          </div>
+          <div class="effect-class-row" id="effectClassRow"></div>
+          <div class="effect-load-status" id="effectLoadStatus" aria-live="polite"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">03</span>Gap mode</div>
+          </div>
+          <div class="mode-toggle" role="group" aria-label="Gap mode">
+            <button type="button" class="mode-btn active" data-gap-mode="normal">Normal</button>
+            <button type="button" class="mode-btn" data-gap-mode="maximum">Maximum gap</button>
+            <button type="button" class="mode-btn" data-gap-mode="exact">Exact gap</button>
+          </div>
+
+          <div class="gap-custom-row" id="gapCustomRow" style="display:none;">
+            <label for="customGapInput" class="gap-custom-label">Gap (seconds)</label>
+            <input type="number" id="customGapInput" class="gap-custom-input" min="0.5" max="10" step="0.5" value="3">
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title"><span class="step-index">04</span>Export ratio</div>
+          </div>
+          <div class="ratio-grid" id="ratioRow">
+
+            <button class="ratio-btn" data-ratio="9:16">
+              <span class="ratio-preview ratio-9-16"></span>
+              <span class="ratio-name">9:16</span>
+              <span class="ratio-sub">Reels / TikTok</span>
+            </button>
+
+            <button class="ratio-btn" data-ratio="1:1">
+              <span class="ratio-preview ratio-1-1"></span>
+              <span class="ratio-name">1:1</span>
+              <span class="ratio-sub">Square</span>
+            </button>
+
+            <button class="ratio-btn" data-ratio="16:9">
+              <span class="ratio-preview ratio-16-9"></span>
+              <span class="ratio-name">16:9</span>
+              <span class="ratio-sub">Widescreen</span>
+            </button>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ============ Right column: status + preview ============ -->
+      <div class="col-side">
+
+        <div class="section-head preview-head">
+          <div class="section-title">Preview</div>
+        </div>
+
+        <div class="preview-panel" id="previewPanel">
+
+          <!-- State 1: nothing generated yet -->
+          <div class="preview-idle" id="previewIdle">
+            <div class="preview-icon">▶</div>
+            <div class="preview-title">Nothing generated yet</div>
+            <div class="preview-sub">Add a video, choose a style, then generate. Your montage plays here.</div>
+            <div class="preview-error" id="previewError" style="display:none;"></div>
+          </div>
+
+          <!-- State 2: backend is rendering, progress streaming in -->
+          <div class="preview-processing" id="previewProcessing" style="display:none;">
+            <div class="circular-progress">
+              <svg viewBox="0 0 120 120">
+                <circle class="circle-bg" cx="60" cy="60" r="52"></circle>
+                <circle class="circle-fill" id="circleFill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <div class="circle-label" id="circleLabel">0%</div>
+            </div>
+            <div class="preview-title">Rendering your montage</div>
+            <div class="preview-sub" id="processingSub">This may take a little while depending on your connection.</div>
+          </div>
+
+          <!-- State 3: finished montage, playable -->
+          <video class="preview-video" id="previewVideo" style="display:none;" controls playsinline></video>
+
+        </div>
+
+        <div class="side-cta">
+          <button class="cta-btn" id="generateBtnDesktop" disabled>Generate montage</button>
+          <div class="cta-status" id="ctaStatusDesktop">Add a video and pick a style</div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- Sticky CTA, mobile only -->
+<div class="cta-bar">
+  <div class="cta-inner">
+    <button class="cta-btn" id="generateBtn" disabled>Generate montage</button>
+    <div class="cta-status" id="ctaStatus">Add a video and pick a style</div>
+  </div>
+</div>
+
+<script src="api_config.js"></script>
+<script src="auth_ui.js"></script>
+<script src="timeline.js"></script>
+<script src="effect_picker.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>
