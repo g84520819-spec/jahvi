@@ -12,8 +12,11 @@ Two separate mechanisms, deliberately kept apart:
 
 import json
 import logging
+import asyncio
 import math
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,13 +24,15 @@ import psutil
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from database import QueuedJob, UploadedFileLog
+from database import QueuedJob, UploadedFileLog, User
 from uploadthing_client import upload_file
 
 logger = logging.getLogger(__name__)
 
 # A zero threshold routes every normal submission through the queue.
 LOAD_THRESHOLD_PERCENT = 0.0
+WORKER_LOAD_THRESHOLD_PERCENT = 85
+_processing_queued_job = ContextVar("processing_queued_job", default=False)
 
 
 def _now_iso() -> str:
@@ -37,7 +42,22 @@ def _now_iso() -> str:
 def is_server_overloaded() -> bool:
     """CPU load check via psutil. interval=0.3 gives a real (non-zero-on-
     first-call) reading without stalling the request for too long."""
+    if _processing_queued_job.get():
+        return False
     return psutil.cpu_percent(interval=0.3) >= LOAD_THRESHOLD_PERCENT
+
+
+@contextmanager
+def queued_job_processing():
+    token = _processing_queued_job.set(True)
+    try:
+        yield
+    finally:
+        _processing_queued_job.reset(token)
+
+
+def is_worker_overloaded() -> bool:
+    return psutil.cpu_percent(interval=0.3) >= WORKER_LOAD_THRESHOLD_PERCENT
 
 
 def enqueue_job(db: Session, *, user_id: int, edit_type: str, payload: dict, input_file_key: str | None) -> QueuedJob:
@@ -145,3 +165,97 @@ def queue_position(db: Session, job: QueuedJob) -> int:
         .count()
     )
     return ahead
+
+
+async def _consume_stream(response, *, db: Session, job: QueuedJob) -> str:
+    filename = None
+    async for chunk in response.body_iterator:
+        text = chunk.decode() if isinstance(chunk, bytes) else chunk
+        for line in text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line[6:])
+            if event.get("event") == "error":
+                raise RuntimeError(event.get("message", "Queued edit failed"))
+            if event.get("event") == "progress":
+                job.progress_percent = max(0, min(99, int(event.get("percent", job.progress_percent or 0))))
+                job.progress_message = str(event.get("message", "Processing video"))[:160]
+                job.updated_at = _now_iso()
+                db.commit()
+            if event.get("event") == "completed":
+                filename = event.get("filename")
+    if not filename:
+        raise RuntimeError("Queued edit finished without an output file")
+    return filename
+
+
+def _run_route(route, *, db, user, job, local_input_path: str, payload: dict, audio_path: str | None = None) -> str:
+    from fastapi import UploadFile
+
+    with open(local_input_path, "rb") as video_file:
+        video_upload = UploadFile(file=video_file, filename="queued-input.mp4", headers={"content-type": "video/mp4"})
+        kwargs = {"video": video_upload, "user": user, "db": db, **payload}
+        if audio_path:
+            with open(audio_path, "rb") as audio_file:
+                kwargs["custom_audio"] = UploadFile(
+                    file=audio_file,
+                    filename="queued-audio.mp3",
+                    headers={"content-type": "audio/mpeg"},
+                )
+                response = route(**kwargs)
+                return asyncio.run(_consume_stream(response, db=db, job=job))
+        response = route(**kwargs)
+        return asyncio.run(_consume_stream(response, db=db, job=job))
+
+
+def _run_dashboard(local_input_path: str, payload: dict, *, db, user, job) -> str:
+    from dashboard import generate_dashboard_video
+
+    return _run_route(generate_dashboard_video, db=db, user=user, job=job, local_input_path=local_input_path, payload=payload)
+
+
+def _run_extraction(local_input_path: str, payload: dict, *, db, user, job) -> str:
+    from extraction import extract
+
+    return _run_route(extract, db=db, user=user, job=job, local_input_path=local_input_path, payload=payload)
+
+
+def _run_beatsync(local_input_path: str, payload: dict, *, db, user, job, audio_path: str | None = None) -> str:
+    from beatsync import beatsync
+
+    if audio_path is None:
+        payload = {**payload, "custom_audio": None}
+    return _run_route(
+        beatsync,
+        db=db,
+        user=user,
+        job=job,
+        local_input_path=local_input_path,
+        payload=payload,
+        audio_path=audio_path,
+    )
+
+
+def process_job(job: QueuedJob, local_input_path: str, *, db: Session, audio_path: str | None = None) -> str:
+    """Runs the job's actual edit pipeline. Returns the local path to the
+    finished output file (caller is responsible for uploading it to
+    UploadThing and cleaning up both local paths)."""
+    payload = json.loads(job.payload)
+    user = db.query(User).filter_by(id=job.user_id).one()
+    with queued_job_processing():
+        if job.edit_type == "dashboard":
+            output_name = _run_dashboard(local_input_path, payload, db=db, user=user, job=job)
+        elif job.edit_type == "extraction":
+            output_name = _run_extraction(local_input_path, payload, db=db, user=user, job=job)
+        elif job.edit_type == "beatsync":
+            payload.pop("audio_file_key", None)
+            output_name = _run_beatsync(local_input_path, payload, db=db, user=user, job=job, audio_path=audio_path)
+        else:
+            raise ValueError(f"Unknown queued edit type: {job.edit_type!r}")
+
+    from dashboard import OUTPUT_DIR
+
+    output_path = OUTPUT_DIR / Path(output_name).name
+    if not output_path.is_file():
+        raise FileNotFoundError(f"Queued output was not created: {output_path}")
+    return str(output_path)

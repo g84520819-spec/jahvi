@@ -1,7 +1,6 @@
 """
 sweeper.py
-Orphan-cleanup sweeper — separate from the 3-minute queue-drain worker
-(worker.py), since orphan cleanup isn't time-sensitive. Runs once a day.
+Hourly orphan-cleanup sweeper, separate from the queue dispatcher.
 
 Three passes:
   1. disk    — delete files not referenced by any active (queued/
@@ -11,27 +10,32 @@ Three passes:
                UploadedFileLog table, not UploadThing's metadata (their
                list-files response doesn't reliably expose an uploaded-at
                timestamp).
-  3. DB      — jobs stuck in 'processing' past a timeout (worker crashed
-               mid-run) get marked 'failed' so they don't block forever.
+    3. DB      — jobs stuck in 'processing' past the worker lease timeout are
+                             requeued when attempts remain, or marked 'failed' otherwise.
 
-Grace window for all three: 1 day.
+Files older than one hour are cleanup candidates. The worker recovery timeout
+is intentionally longer so ordinary long-running renders are not requeued.
 """
 
 import logging
 import os
+import shutil
 import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cleanup import is_temp_path_active
 from database import QueuedJob, SessionLocal, UploadedFileLog
 from uploadthing_client import delete_files, list_files
 
 logger = logging.getLogger(__name__)
 
-SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
-GRACE_WINDOW = timedelta(days=1)
+SWEEP_INTERVAL_SECONDS = 60 * 60
+GRACE_WINDOW = timedelta(hours=1)
+STUCK_JOB_TIMEOUT = timedelta(hours=24)
+MAX_WORKER_ATTEMPTS = 3
 
 # Where Jahvi writes local scratch files during processing (worker.py,
 # extraction.py, dashboard.py, beatsync.py all use temp dirs under here).
@@ -71,6 +75,9 @@ def _active_file_keys(db) -> set[str]:
 
 def _sweep_disk(db):
     cutoff = _now() - GRACE_WINDOW
+    active_jobs = db.query(QueuedJob).filter(QueuedJob.status.in_(["queued", "processing"])).all()
+    active_job_ids = {job.id for job in active_jobs}
+    has_processing_jobs = any(job.status == "processing" for job in active_jobs)
     try:
         entries = os.listdir(DISK_SCAN_DIR)
     except OSError:
@@ -78,8 +85,22 @@ def _sweep_disk(db):
     for name in entries:
         if not name.startswith("jahvi_"):
             continue  # only touch files Jahvi itself created
+        if has_processing_jobs and name.startswith("jahvi_upload_"):
+            continue
+        if any(job_id in name for job_id in active_job_ids):
+            continue
         path = os.path.join(DISK_SCAN_DIR, name)
+        if is_temp_path_active(path):
+            continue
         try:
+            if os.path.isdir(path):
+                if not name.startswith("jahvi_beatsync_"):
+                    continue
+                mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+                if mtime < cutoff:
+                    shutil.rmtree(path)
+                    logger.info("Sweeper: removed orphaned temp directory %s", name)
+                continue
             if not os.path.isfile(path):
                 continue
             mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
@@ -96,6 +117,8 @@ def _sweep_disk(db):
     try:
         output_entries = os.listdir(OUTPUT_SCAN_DIR)
     except OSError:
+        output_entries = []
+    if has_processing_jobs:
         output_entries = []
     for name in output_entries:
         path = OUTPUT_SCAN_DIR / name
@@ -143,14 +166,23 @@ def _sweep_uploadthing(db):
 
 
 def _sweep_stuck_jobs(db):
-    cutoff = _now() - GRACE_WINDOW
+    cutoff = _now() - STUCK_JOB_TIMEOUT
     stuck = db.query(QueuedJob).filter(QueuedJob.status == "processing").all()
     for job in stuck:
-        started = _parse_iso(job.started_at)
-        if started is not None and started < cutoff:
-            job.status = "failed"
-            job.error_message = "Marked failed by the orphan sweeper — stuck in processing past the timeout."
-            job.completed_at = datetime.now(timezone.utc).isoformat()
+        last_update = _parse_iso(job.updated_at) or _parse_iso(job.started_at)
+        if last_update is not None and last_update < cutoff:
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            if (job.attempt_count or 0) < MAX_WORKER_ATTEMPTS:
+                job.status = "queued"
+                job.assigned_worker = None
+                job.progress_percent = 0
+                job.progress_message = "Requeued after an interrupted worker run"
+                job.error_message = None
+            else:
+                job.status = "failed"
+                job.error_message = "Processing was interrupted. Please try again."
+                job.progress_message = "Processing failed"
+                job.completed_at = job.updated_at
     db.commit()
 
 

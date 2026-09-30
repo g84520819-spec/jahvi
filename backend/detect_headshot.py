@@ -8,9 +8,17 @@ import time
 # =========================================================
 # ⚙️ CONFIGURATION - EDIT YOUR FILE HERE
 # =========================================================
-VIDEO_FILE = "gameplay.mp4"      # <--- Put your video path/filename here
+VIDEO_FILE = "backend/br2edited.mp4"  # <--- Put your video path/filename here
 SAVE_JSON = True                 # Saves results to 'timestamps.json'
 SHOW_DEBUG_WINDOW = False        # Set to True to see a visual window while processing
+
+# Middle-ground ROI that widened the crop without making it too broad.
+# Percent of frame HEIGHT (0.0 = very top, 1.0 = bottom):
+ROI_Y_TOP = 0.05
+ROI_Y_BOTTOM = 0.45
+# Percent of frame WIDTH (0.0 = left edge, 1.0 = right edge), centered:
+ROI_X_LEFT = 0.10
+ROI_X_RIGHT = 0.90
 # =========================================================
 
 
@@ -47,9 +55,12 @@ class NonAIIconDetector:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         closed_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
 
-        # Geometry validation
+        # Geometry validation — collect every valid candidate, then pick the
+        # strongest one (largest area) instead of just the first contour found.
         contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        best = None
+        best_area = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if self.min_area <= area <= self.max_area:
@@ -60,8 +71,12 @@ class NonAIIconDetector:
                     hull = cv2.convexHull(cnt)
                     hull_area = cv2.contourArea(hull)
                     if hull_area > 0 and (float(area) / hull_area) >= self.min_solidity:
-                        return True, (x, y, w, h)
+                        if area > best_area:
+                            best_area = area
+                            best = (x, y, w, h)
 
+        if best is not None:
+            return True, best
         return False, None
 
 
@@ -71,18 +86,13 @@ def format_time(seconds):
     return f"{minutes:02d}:{sec:06.3f}"
 
 
-def main():
-    # Allow overriding via terminal argument if provided, otherwise use VIDEO_FILE
-    video_path = sys.argv[1] if len(sys.argv) > 1 else VIDEO_FILE
-
+def detect_headshots(video_path, *, save_json=False):
     if not os.path.exists(video_path):
-        print(f"❌ Error: Video file not found at '{video_path}'")
-        sys.exit(1)
+        raise FileNotFoundError(f"Video file not found at '{video_path}'")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Error: Could not open video file '{video_path}'")
-        sys.exit(1)
+        raise RuntimeError(f"Could not open video file '{video_path}'")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -96,14 +106,22 @@ def main():
     detector = NonAIIconDetector()
 
     # State Machine Variables
+    # Keep the original threshold to preserve the stable detector behavior.
     TRIGGER_THRESHOLD = 3
     consecutive_frames = 0
     icon_active = False
     lockout_counter = 0
     clear_screen_counter = 0
+    last_bbox_center = None
 
-    LOCKOUT_MIN_FRAMES = int(fps * 0.4)
-    CLEAR_RESET_FRAMES = 5
+    # A real icon stays roughly in the same spot while it's visible; noise
+    # (stray saturated pixels from gunfire, blood, etc.) tends to jump
+    # around frame to frame. If a "detection" appears far from the last
+    # one, it's treated as a brand-new candidate rather than a continuation.
+    POSITION_TOLERANCE_RATIO = 0.35
+
+    LOCKOUT_MIN_FRAMES = max(5, int(fps * 0.15))
+    CLEAR_RESET_FRAMES = 2
 
     detected_kills = []
     start_time = time.time()
@@ -116,15 +134,28 @@ def main():
         current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
         height, width = frame.shape[:2]
 
-        # Dynamic Safe ROI (Top 5% to 50% height | 15% to 85% width)
-        y1, y2 = int(height * 0.05), int(height * 0.50)
-        x1, x2 = int(width * 0.15), int(width * 0.85)
+        # Upper-center ROI (where the headshot icon appears)
+        y1, y2 = int(height * ROI_Y_TOP), int(height * ROI_Y_BOTTOM)
+        x1, x2 = int(width * ROI_X_LEFT), int(width * ROI_X_RIGHT)
         roi = frame[y1:y2, x1:x2]
 
         is_detected, bbox = detector.process_roi(roi)
 
         if is_detected:
-            consecutive_frames += 1
+            bx, by, bw, bh = bbox
+            center = (bx + bw / 2.0, by + bh / 2.0)
+            roi_h, roi_w = roi.shape[:2]
+            tol_x = roi_w * POSITION_TOLERANCE_RATIO
+            tol_y = roi_h * POSITION_TOLERANCE_RATIO
+
+            same_spot = True
+            if last_bbox_center is not None and not icon_active:
+                dx = abs(center[0] - last_bbox_center[0])
+                dy = abs(center[1] - last_bbox_center[1])
+                same_spot = dx <= tol_x and dy <= tol_y
+
+            consecutive_frames = consecutive_frames + 1 if same_spot else 1
+            last_bbox_center = center
             clear_screen_counter = 0
 
             if consecutive_frames == TRIGGER_THRESHOLD and not icon_active:
@@ -149,6 +180,7 @@ def main():
         else:
             if not icon_active:
                 consecutive_frames = 0
+                last_bbox_center = None
 
         # Cooldown / Reset Logic
         if icon_active:
@@ -181,10 +213,20 @@ def main():
     print(f"📊 Total Kills Found: {len(detected_kills)}")
     print("=" * 60)
 
-    if SAVE_JSON:
+    if save_json:
         with open("timestamps.json", "w") as f:
             json.dump(detected_kills, f, indent=4)
         print("📁 Timestamps saved to 'timestamps.json'")
+    return detected_kills
+
+
+def main():
+    video_path = sys.argv[1] if len(sys.argv) > 1 else VIDEO_FILE
+    try:
+        detect_headshots(video_path, save_json=SAVE_JSON)
+    except (FileNotFoundError, RuntimeError) as error:
+        print(f"❌ Error: {error}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

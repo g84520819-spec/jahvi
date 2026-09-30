@@ -32,6 +32,7 @@
         <div class="greeting-name" id="userName">Welcome back…</div>
       </div>
       <div class="avatar" id="userAvatar" aria-label="Your account">--</div>
+      <a class="topbar-jobs-link" href="my_videos.html">My jobs</a>
       <button type="button" class="logout topbar-logout">Log out</button>
     </header>
 
@@ -59,6 +60,9 @@
 
       <a href="headshot_extraction_lab.html" class="lab-nav-btn">
         <p>Headshot Extraction Lab 🧪</p>
+      </a>
+      <a href="my_videos.html" class="lab-nav-btn">
+        <p>My video jobs</p>
       </a>
     </div>
 
@@ -98,9 +102,11 @@
             <div class="timeline-toolbar">
               <strong>Headshot timeline</strong>
               <span class="timeline-time" id="timelineCurrentTime">0.00s</span>
+              <button class="timeline-add" id="detectHeadshotsBtn" type="button" disabled>Find headshots</button>
               <button class="timeline-add" id="addBarBtn" type="button" disabled>Add bar</button>
             </div>
             <div class="timeline-track" id="timelineTrack"><span class="timeline-empty" id="timelineEmpty">Add bars at headshot moments</span></div>
+            <p class="headshot-detection-status" id="headshotDetectionStatus" role="status" aria-live="polite">Select a video to detect headshots.</p>
             <ul class="timestamp-list" id="timestampList" aria-label="Headshot timestamps"></ul>
           </div>
         </div>

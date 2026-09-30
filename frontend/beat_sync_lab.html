@@ -27,6 +27,8 @@
 
     <a class="side-link" href="dashboard.html">← Back to Dashboard</a>
     <a class="side-link" href="headshot_extraction_lab.html">Headshot Extraction Lab</a>
+    <a class="side-link" href="my_videos.html">My jobs</a>
+    <a class="side-link" href="my_videos.html">My video jobs</a>
 
     <a class="side-link logout" href="#">Log out</a>
   </nav>
@@ -107,9 +109,11 @@
             <div class="timeline-toolbar">
               <strong>Headshot timeline</strong>
               <span class="timeline-time" id="timelineCurrentTime">0.00s</span>
+              <button class="timeline-add" id="detectHeadshotsBtn" type="button" disabled>Find headshots</button>
               <button class="timeline-add" id="addBarBtn" type="button" disabled>Add bar</button>
             </div>
             <div class="timeline-track" id="timelineTrack"><span class="timeline-empty" id="timelineEmpty">Add bars at headshot moments</span></div>
+            <p class="headshot-detection-status" id="headshotDetectionStatus" role="status" aria-live="polite">Select a video to detect headshots.</p>
             <ul class="timestamp-list" id="timestampList" aria-label="Headshot timestamps"></ul>
           </div>
         </div>
@@ -157,6 +161,11 @@
             <span>Added music volume</span>
             <output id="musicVolumeValue">100%</output>
             <input id="musicVolume" type="range" min="0" max="100" value="100" step="1">
+          </label>
+          <label class="music-volume" for="videoVolume">
+            <span>Gameplay video volume</span>
+            <output id="videoVolumeValue">100%</output>
+            <input id="videoVolume" type="range" min="0" max="200" value="100" step="1">
           </label>
         </div>
 

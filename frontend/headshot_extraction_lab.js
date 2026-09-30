@@ -40,6 +40,18 @@ const videoPreviewCard = document.getElementById('videoPreviewCard');
 const videoPreviewPlayer = document.getElementById('videoPreviewPlayer');
 const replaceVideoBtn = document.getElementById('replaceVideoBtn');
 const deleteVideoBtn = document.getElementById('deleteVideoBtn');
+let localVideoPreviewUrl = null;
+
+function setLocalVideoPreview(file) {
+  if (localVideoPreviewUrl) URL.revokeObjectURL(localVideoPreviewUrl);
+  localVideoPreviewUrl = URL.createObjectURL(file);
+  videoPreviewPlayer.src = localVideoPreviewUrl;
+}
+
+function clearLocalVideoPreview() {
+  if (localVideoPreviewUrl) URL.revokeObjectURL(localVideoPreviewUrl);
+  localVideoPreviewUrl = null;
+}
 
 clipBoxElement.addEventListener('click', () => clipInputElement.click());
 replaceVideoBtn.addEventListener('click', () => clipInputElement.click());
@@ -51,7 +63,7 @@ clipInputElement.addEventListener('change', () => {
   pageState.videoFile = selectedFile;
   window.JahviTimeline?.clear();
 
-  videoPreviewPlayer.src = URL.createObjectURL(selectedFile);
+  setLocalVideoPreview(selectedFile);
   videoPreviewPlayer.load();
 
   reelElement.style.display = 'none';
@@ -67,6 +79,7 @@ deleteVideoBtn.addEventListener('click', () => {
 
   clipInputElement.value = '';
   videoPreviewPlayer.pause();
+  clearLocalVideoPreview();
   videoPreviewPlayer.removeAttribute('src');
   videoPreviewPlayer.load();
 
@@ -321,16 +334,11 @@ async function waitForQueuedJob(jobId){
 
 async function showFinishedVideo(filename){
   const videoUrl = filename.startsWith('http') ? filename : filename.startsWith('/') ? `${API_BASE_URL}${filename}` : `${API_BASE_URL}/api/video/${encodeURIComponent(filename)}`;
-  const response = await fetch(videoUrl, { credentials: 'include', headers: authenticatedHeaders() });
-  if (!response.ok) throw new Error(`Could not fetch finished video (${response.status})`);
-
-  const videoBlob = await response.blob();
-  const blobUrl = URL.createObjectURL(videoBlob);
-
   previewProcessingElement.style.display = 'none';
   previewIdleElement.style.display = 'none';
   previewVideoElement.style.display = 'block';
-  previewVideoElement.src = blobUrl;
+  previewVideoElement.crossOrigin = 'use-credentials';
+  previewVideoElement.src = videoUrl;
 
   // Once the video's real length is known, show the small payoff stat —
   // headshot count (from the stream) + final duration (from the video itself).

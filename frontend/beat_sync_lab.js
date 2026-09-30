@@ -15,6 +15,7 @@ const pageState = {
   selectedEffectClassIds: [],
   exportRatio: '9:16',
   musicVolume: 1,
+  videoVolume: 1,
 };
 
 // ---------- Icons ----------
@@ -101,6 +102,18 @@ const videoPreviewCard = document.getElementById('videoPreviewCard');
 const videoPreviewPlayer = document.getElementById('videoPreviewPlayer');
 const replaceVideoBtn = document.getElementById('replaceVideoBtn');
 const deleteVideoBtn = document.getElementById('deleteVideoBtn');
+let localVideoPreviewUrl = null;
+
+function setLocalVideoPreview(file) {
+  if (localVideoPreviewUrl) URL.revokeObjectURL(localVideoPreviewUrl);
+  localVideoPreviewUrl = URL.createObjectURL(file);
+  videoPreviewPlayer.src = localVideoPreviewUrl;
+}
+
+function clearLocalVideoPreview() {
+  if (localVideoPreviewUrl) URL.revokeObjectURL(localVideoPreviewUrl);
+  localVideoPreviewUrl = null;
+}
 
 clipBoxElement.addEventListener('click', () => clipInputElement.click());
 replaceVideoBtn.addEventListener('click', () => clipInputElement.click());
@@ -110,8 +123,9 @@ clipInputElement.addEventListener('change', () => {
   if (!selectedFile) return;
 
   pageState.videoFile = selectedFile;
+  window.JahviTimeline?.clear();
 
-  videoPreviewPlayer.src = URL.createObjectURL(selectedFile);
+  setLocalVideoPreview(selectedFile);
   videoPreviewPlayer.load();
 
   reelElement.style.display = 'none';
@@ -127,6 +141,7 @@ deleteVideoBtn.addEventListener('click', () => {
 
   clipInputElement.value = '';
   videoPreviewPlayer.pause();
+  clearLocalVideoPreview();
   videoPreviewPlayer.removeAttribute('src');
   videoPreviewPlayer.load();
 
@@ -150,12 +165,20 @@ const audioPreviewPlayer = document.getElementById('audioPreviewPlayer');
 const audioFileName = document.getElementById('audioFileName');
 const replaceAudioBtn = document.getElementById('replaceAudioBtn');
 const deleteAudioBtn = document.getElementById('deleteAudioBtn');
+let localAudioPreviewUrl = null;
 const musicVolumeInput = document.getElementById('musicVolume');
 const musicVolumeValue = document.getElementById('musicVolumeValue');
+const videoVolumeInput = document.getElementById('videoVolume');
+const videoVolumeValue = document.getElementById('videoVolumeValue');
 
 musicVolumeInput.addEventListener('input', () => {
   pageState.musicVolume = Number(musicVolumeInput.value) / 100;
   musicVolumeValue.textContent = `${musicVolumeInput.value}%`;
+});
+
+videoVolumeInput.addEventListener('input', () => {
+  pageState.videoVolume = Number(videoVolumeInput.value) / 100;
+  videoVolumeValue.textContent = `${videoVolumeInput.value}%`;
 });
 
 audioBox.addEventListener('click', () => audioInputElement.click());
@@ -170,7 +193,9 @@ audioInputElement.addEventListener('change', () => {
 
   // Works whether the file is a real audio file or a video — the <audio>
   // tag just plays whatever audio track exists in it, ignoring any video.
-  audioPreviewPlayer.src = URL.createObjectURL(selectedFile);
+  if (localAudioPreviewUrl) URL.revokeObjectURL(localAudioPreviewUrl);
+  localAudioPreviewUrl = URL.createObjectURL(selectedFile);
+  audioPreviewPlayer.src = localAudioPreviewUrl;
   audioPreviewPlayer.load();
 
   audioSlot.style.display = 'none';
@@ -182,6 +207,8 @@ deleteAudioBtn.addEventListener('click', () => {
   audioInputElement.value = '';
 
   audioPreviewPlayer.pause();
+  if (localAudioPreviewUrl) URL.revokeObjectURL(localAudioPreviewUrl);
+  localAudioPreviewUrl = null;
   audioPreviewPlayer.removeAttribute('src');
   audioPreviewPlayer.load();
 
@@ -287,6 +314,7 @@ async function startSync(){
     formData.append('effect_class_ids', JSON.stringify(pageState.selectedEffectClassIds));
     formData.append('ratio', pageState.exportRatio);
     formData.append('music_volume', String(pageState.musicVolume));
+    formData.append('video_volume', String(pageState.videoVolume));
     if (pageState.audioFile) {
       formData.append('custom_audio', pageState.audioFile, pageState.audioFile.name);
     }
@@ -465,37 +493,11 @@ function parseStreamEvent(line) {
 
 async function showFinishedVideo(filename){
   const videoUrl = filename.startsWith('http') ? filename : filename.startsWith('/') ? `${API_BASE_URL}${filename}` : `${API_BASE_URL}/api/video/${encodeURIComponent(filename)}`;
-  let response = await fetch(videoUrl, { credentials: 'include' });
-  if (response.status === 401) {
-    try {
-      const refreshResponse = await fetch(`${API_BASE_URL}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (refreshResponse.ok) {
-        const session = await refreshResponse.json();
-        localStorage.setItem('jahvi_user', JSON.stringify(session.user));
-        response = await fetch(videoUrl, { credentials: 'include' });
-      } else {
-        window.JahviAuth?.clearSession();
-        window.location.replace('login.html');
-        return;
-      }
-    } catch {
-      window.JahviAuth?.clearSession();
-      window.location.replace('login.html');
-      return;
-    }
-  }
-  if (!response.ok) throw new Error(`Could not fetch finished video (${response.status})`);
-
-  const videoBlob = await response.blob();
-  const blobUrl = URL.createObjectURL(videoBlob);
-
   previewProcessingElement.style.display = 'none';
   previewIdleElement.style.display = 'none';
   previewVideoElement.style.display = 'block';
-  previewVideoElement.src = blobUrl;
+  previewVideoElement.crossOrigin = 'use-credentials';
+  previewVideoElement.src = videoUrl;
 
   previewVideoElement.addEventListener('loadedmetadata', () => {
     const durationSeconds = Math.round(previewVideoElement.duration);

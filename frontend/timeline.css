@@ -1,8 +1,9 @@
 .timeline-section{margin-top:18px;padding:14px 0 0;border-top:1px solid var(--border)}
-.timeline-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:12px}
+.timeline-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:12px;flex-wrap:wrap}
 .timeline-time{margin-left:auto;font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:11px}
 .timeline-add{padding:7px 11px;border:1px solid var(--border-strong);border-radius:8px;background:var(--card);color:var(--text);font-size:11px;cursor:pointer}
 .timeline-add:disabled{opacity:.4;cursor:not-allowed}
+.headshot-detection-status{min-height:16px;margin:8px 0 0;color:var(--muted);font-size:11px;line-height:1.4}
 .timeline-track{position:relative;height:34px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(90deg,rgba(255,106,44,.12),rgba(255,178,32,.06));touch-action:none;}
 .timeline-track::after{content:'';position:absolute;left:0;right:0;top:16px;border-top:1px solid rgba(255,255,255,.14)}
 .timeline-empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:11px;pointer-events:none}

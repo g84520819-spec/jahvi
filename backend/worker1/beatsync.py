@@ -15,6 +15,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from database import DashboardEffect, User, get_db
+from cleanup import register_temp_path, unregister_temp_path
 from dashboard import ALLOWED_RATIOS, OUTPUT_DIR, _apply_stage_2_effects, _pick_effect_for_user, _parse_timestamps
 from me import get_current_user
 from timestamp_sync import synchronize_video
@@ -34,6 +35,11 @@ RATIO_SPECS = {
 
 def _event(event, **data):
     return f"data: {json.dumps({'event': event, **data})}\n\n"
+
+
+def _cleanup_request_dir(request_dir):
+    shutil.rmtree(request_dir, ignore_errors=True)
+    unregister_temp_path(request_dir)
 
 
 def _require_tools():
@@ -106,11 +112,12 @@ def _apply_export_ratio(input_path, output_path, ratio):
         raise RuntimeError(result.stderr.strip() or "Could not apply export ratio")
 
 
-def _mix_audio(video_path, music_path, volume, output_path):
+def _mix_audio(video_path, music_path, music_volume, video_volume, output_path):
     if _has_audio_stream(video_path):
         filter_graph = (
-            f"[1:a]volume={volume:.3f}[music];"
-            "[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[a]"
+            f"[0:a]volume={video_volume:.3f}[game];"
+            f"[1:a]volume={music_volume:.3f}[music];"
+            "[game][music]amix=inputs=2:duration=first:dropout_transition=2[a]"
         )
         command = [
             "ffmpeg", "-y", "-i", str(video_path), "-i", str(music_path),
@@ -121,13 +128,30 @@ def _mix_audio(video_path, music_path, volume, output_path):
         duration = _video_duration(video_path)
         command = [
             "ffmpeg", "-y", "-i", str(video_path), "-i", str(music_path),
-            "-filter_complex", f"[1:a]volume={volume:.3f}[a]",
+            "-filter_complex", f"[1:a]volume={music_volume:.3f}[a]",
             "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
             "-t", f"{duration:.3f}", "-movflags", "+faststart", str(output_path),
         ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "Could not mix music")
+
+
+def _set_video_volume(video_path, volume, output_path):
+    if not _has_audio_stream(video_path):
+        shutil.copyfile(video_path, output_path)
+        return
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(video_path), "-filter:a", f"volume={volume:.3f}",
+            "-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac",
+            "-movflags", "+faststart", str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Could not adjust video loudness")
 
 
 @router.post("/beatsync")
@@ -138,6 +162,7 @@ def beatsync(
     effect_class_ids: str = Form(...),
     ratio: str = Form("9:16"),
     music_volume: float = Form(1.0),
+    video_volume: float = Form(1.0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -149,6 +174,8 @@ def beatsync(
         raise HTTPException(status_code=422, detail="Unsupported export ratio")
     if not 0 <= music_volume <= 1:
         raise HTTPException(status_code=422, detail="Music volume must be between 0 and 1")
+    if not 0 <= video_volume <= 2:
+        raise HTTPException(status_code=422, detail="Video volume must be between 0 and 2")
     timestamps = _parse_timestamps(headshot_timestamps)
     try:
         effect_ids = [int(value) for value in json.loads(effect_class_ids)]
@@ -158,6 +185,7 @@ def beatsync(
         raise HTTPException(status_code=422, detail="Choose at least one effect style")
 
     request_dir = Path(tempfile.mkdtemp(prefix="jahvi_beatsync_"))
+    register_temp_path(request_dir)
     paths = []
     try:
         source_path = save_upload_in_chunks(video, request_dir, VIDEO_EXTENSIONS)
@@ -178,12 +206,13 @@ def beatsync(
         if is_server_overloaded():
             audio_file_key = None
             if custom_audio is not None:
-                audio_file_key = upload_queue_file(music_source, prefix="queue-audio")
+                audio_file_key = upload_queue_file(music_source, prefix="queue-audio", db=db)
             payload = {
                 "headshot_timestamps": json.dumps(timestamps),
                 "effect_class_ids": json.dumps(effect_ids),
                 "ratio": ratio,
                 "music_volume": music_volume,
+                "video_volume": video_volume,
             }
             if audio_file_key:
                 payload["audio_file_key"] = audio_file_key
@@ -196,7 +225,7 @@ def beatsync(
             )
             for path in paths:
                 path.unlink(missing_ok=True)
-            shutil.rmtree(request_dir, ignore_errors=True)
+            _cleanup_request_dir(request_dir)
             return queued_response(db, job)
 
         def stream() -> Iterator[str]:
@@ -263,9 +292,10 @@ def beatsync(
 
                 if custom_audio is not None:
                     stage = "mixing audio"
-                    _mix_audio(ratioed_path, normalized_music, music_volume, final_path)
+                    _mix_audio(ratioed_path, normalized_music, music_volume, video_volume, final_path)
                 else:
-                    shutil.copyfile(ratioed_path, final_path)
+                    stage = "adjusting video loudness"
+                    _set_video_volume(ratioed_path, video_volume, final_path)
 
                 if not final_path.is_file() or final_path.stat().st_size == 0:
                     raise RuntimeError("Final video was not created")
@@ -281,7 +311,7 @@ def beatsync(
             finally:
                 for path in paths:
                     path.unlink(missing_ok=True)
-                shutil.rmtree(request_dir, ignore_errors=True)
+                _cleanup_request_dir(request_dir)
                 if not completed:
                     final_path.unlink(missing_ok=True)
 
@@ -297,5 +327,5 @@ def beatsync(
     except Exception:
         for path in paths:
             path.unlink(missing_ok=True)
-        shutil.rmtree(request_dir, ignore_errors=True)
+        _cleanup_request_dir(request_dir)
         raise

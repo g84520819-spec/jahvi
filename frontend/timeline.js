@@ -249,6 +249,7 @@
   video.addEventListener('loadedmetadata', () => {
     state.duration = Number.isFinite(video.duration) ? video.duration : 0;
     addButton.disabled = !state.duration;
+    updateDetectionButton();
     render();
   });
   video.addEventListener('timeupdate', () => updateActive(video.currentTime));
@@ -258,7 +259,99 @@
     hasTimestamps: () => state.timestamps.length > 0,
     getTimestamps: () => [...state.timestamps],
     getDuration: () => state.duration,
+    setTimestamps: timestamps => {
+      if (!Array.isArray(timestamps)) return false;
+      state.timestamps = [...new Set(
+        timestamps
+          .map(Number)
+          .filter(Number.isFinite)
+          .map(clampTime)
+          .map(timestamp => Number(timestamp.toFixed(3)))
+      )].sort((left, right) => left - right);
+      state.stepSizes = state.timestamps.map(() => '0.4');
+      state.activeIndex = -1;
+      render();
+      emitChange();
+      return true;
+    },
     clear: () => { state.timestamps = []; state.stepSizes = []; state.activeIndex = -1; render(); emitChange(); },
   };
+
+  const detectButton = document.getElementById('detectHeadshotsBtn');
+  const detectionStatus = document.getElementById('headshotDetectionStatus');
+  const videoInput = document.getElementById('videoInput');
+  const updateDetectionButton = () => {
+    if (detectButton) detectButton.disabled = !videoInput?.files?.length || !state.duration;
+  };
+
+  if (detectButton && detectionStatus && videoInput) {
+    videoInput.addEventListener('change', () => {
+      state.duration = 0;
+      updateDetectionButton();
+    });
+    document.getElementById('deleteVideoBtn')?.addEventListener('click', () => window.setTimeout(updateDetectionButton, 0));
+    document.getElementById('replaceVideoBtn')?.addEventListener('click', () => window.setTimeout(updateDetectionButton, 0));
+
+    detectButton.addEventListener('click', async () => {
+      const videoFile = videoInput.files?.[0];
+      if (!videoFile) {
+        detectionStatus.textContent = 'Choose a video first.';
+        updateDetectionButton();
+        return;
+      }
+
+      detectButton.disabled = true;
+      detectButton.textContent = 'Detecting…';
+      detectionStatus.textContent = 'Scanning video for headshots…';
+
+      try {
+        const user = await window.JahviAuth?.loadUserAndCredits();
+        if (!user) throw new Error('Please sign in before detecting headshots.');
+
+        const formData = new FormData();
+        formData.append('video', videoFile, videoFile.name);
+        const apiBaseUrl = window.JAHVI_API_BASE_URL || '';
+        let response = await fetch(`${apiBaseUrl}/api/detect-headshots`, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+
+        if (response.status === 401) {
+          const refresh = await fetch(`${apiBaseUrl}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+          if (refresh.ok) {
+            response = await fetch(`${apiBaseUrl}/api/detect-headshots`, {
+              method: 'POST',
+              body: formData,
+              credentials: 'include',
+            });
+          }
+        }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Detection failed (${response.status}).`);
+        }
+
+        const result = await response.json();
+        if (!window.JahviTimeline.setTimestamps(result.timestamps)) {
+          throw new Error('The server returned an invalid timestamp list.');
+        }
+        detectionStatus.textContent = result.count
+          ? `Found ${result.count} headshot${result.count === 1 ? '' : 's'}. Review and adjust the timeline bars.`
+          : 'No headshots detected. Add bars manually or try another video.';
+      } catch (error) {
+        detectionStatus.textContent = error.message || 'Could not detect headshots.';
+      } finally {
+        detectButton.textContent = 'Find headshots';
+        updateDetectionButton();
+      }
+    });
+
+    updateDetectionButton();
+  }
+
   render();
 })();

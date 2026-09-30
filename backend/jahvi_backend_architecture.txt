@@ -1,0 +1,101 @@
+We are changing Jahvi's backend architecture. Carefully inspect the existing code before making any changes. Preserve all existing functionality unless explicitly instructed otherwise.
+
+1. Backend Architecture
+
+Run three separate backend processes:
+
+- Entry Backend: Receives all frontend requests and acts as the central API.
+- Worker 1 and Worker 2: Independent processing services, each configurable to run on its own port and URL.
+
+The entry backend is the only backend that the frontend communicates with. It handles authentication, validation, job submission, status, and result delivery. Workers must never communicate directly with the frontend.
+
+The entry backend sends worker requests using HTTPX and signs each request with HMAC. Each worker verifies the signature before accepting the request. Keep the shared secret in server-side environment variables only. Use a signed timestamp with a bounded age to reduce replay risk; HMAC authenticates and protects integrity but does not encrypt traffic.
+
+2. Job Queue
+
+Use the existing queue implementation if available; do not introduce a queue technology unnecessarily.
+
+- All jobs requiring FFmpeg generation/processing enter the queue. CV headshot detection does not.
+- The entry backend assigns queued jobs randomly among workers that have available capacity.
+- Both workers process jobs independently, without exceeding their configured capacity.
+- Track queued, processing, completed, and failed states and expose each user's job status/results through the entry backend.
+- Handle worker timeouts/failures without losing queued or retryable jobs.
+
+3. Shared Headshot Detection (CV Processing)
+
+Use the existing OpenCV headshot detector, including its ROI, HSV, edge, and temporal detection logic. Detection runs in the entry backend, not on either worker, and is available from all three existing video-processing pages.
+
+Frontend:
+
+- Add a detect-headshots button to each of the three video pages.
+- Send the selected video to the entry backend using chunked or streamed upload so the whole video is not held in memory.
+- When the timestamp list returns, automatically create timeline bars at those positions using the existing timeline UI.
+- Let the user inspect, correct, and remove bars before submitting the final generation request.
+
+Entry Backend:
+
+- Receive and stage the video using a UUID-based temporary path.
+- Run the existing CV detector and return its timestamp list, subtracting 0.5 seconds from every timestamp and clamping results to zero or greater.
+- Keep detection requests outside the FFmpeg job queue. Detection should read/process video frames incrementally and must not rewrite the detector algorithm unless necessary.
+
+4. BeatSync Lab: Video Loudness Control
+
+Add a range slider to the BeatSync Lab frontend that allows users to adjust the video's loudness.
+
+Requirements:
+
+- The slider should provide an intuitive way to control loudness.
+- Send the selected value to the entry backend along with the BeatSync processing request.
+- Pass the value to the appropriate worker when processing the job.
+- Apply the loudness adjustment during the FFmpeg processing stage.
+- This setting must affect BeatSync Lab only.
+- Do not change the audio levels of videos processed by the Headshot Extraction Lab or other features.
+
+Use an appropriate range and default value. Ensure the backend validates the slider value rather than blindly trusting frontend input.
+
+5. Job Tracking Page
+
+Add a page or view where an authenticated user can see their own queued and completed jobs. Show useful user-facing details such as job UUID, status, current queue position, progress/events, assigned worker when applicable, creation/update times, and the result URL when complete.
+
+- Retrieve job information through the entry backend and scope it to the authenticated user.
+- Queue position is dynamic and must reflect the current queue.
+- Show safe, user-facing job events only; do not expose secrets, internal stack traces, or other users' jobs.
+
+6. Important Architectural Requirements
+
+- Keep the existing authentication, credit system, database, and other features working.
+- Configure both worker URLs and ports through environment variables. Do not hardcode secrets or sensitive configuration.
+- Use UUIDs for job identifiers and temporary paths, not user-provided filenames. UUIDs do not replace authentication or authorization.
+- Delete temporary input/output files as soon as their processing and upload lifecycle ends, including terminal failures. Keep files needed by queued or retryable jobs until they are terminal.
+- Run a periodic cleanup task that removes orphaned temporary files older than one hour if immediate deletion fails. It must not delete files belonging to active, queued, or retryable jobs.
+- Stream or chunk video uploads/transfers and process video incrementally where supported; do not load entire videos into memory.
+
+7. Implementation Instructions
+
+Before modifying anything:
+
+1. Inspect the existing project structure and identify the entry backend, processing code, queue, CV detection file, and BeatSync Lab frontend.
+2. Explain briefly how the current architecture works.
+3. Identify which existing files need modification and which new files are necessary.
+4. Identify the three existing video-processing pages and current queue/status mechanisms before choosing integration points.
+
+Then implement the changes incrementally.
+
+Do not create duplicate endpoints, duplicate processing logic, or unnecessary abstractions.
+
+Do not replace working code simply to make it fit a new design.
+
+Ensure that all communication between the entry backend and workers is properly handled, including errors, timeouts, and failed jobs.
+
+After implementation:
+
+- List all modified and newly created files.
+- Explain how to start the entry backend and both workers on separate ports.
+- Show the required environment variables.
+- Explain how a video moves from the frontend through the entry backend to a worker and back.
+- Explain how CV headshot detection works independently of the queue.
+- Explain the shared detect, inspect, and edit flow across all three video pages, plus the job tracking page.
+- Explain UUID-based temporary storage, immediate deletion, and the one-hour cleanup fallback.
+- Test the existing functionality and the new architecture.
+
+Important: Work with the existing codebase. Do not generate an entirely new Jahvi project or remove existing functionality. Make changes in small, verifiable steps and report any architectural problems before making destructive changes.

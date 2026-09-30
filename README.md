@@ -1,14 +1,45 @@
 # Jahvi
 
-## Start the backend
+## Start the backend and workers
 
-From the repository root, with `DATABASE_URL` and `JWT_SECRET` available in the environment:
+Install `backend/requirements.txt`, then configure `DATABASE_URL`, `JWT_SECRET`,
+`UPLOADTHING_TOKEN`, and one private shared worker secret in the environment.
+The same worker secret must be present in the entry backend and both workers.
+Never expose it to the frontend. For local development, configure:
+
+```text
+JAHVI_WORKER_SHARED_SECRET=<long-random-secret>
+JAHVI_WORKER_1_URL=http://127.0.0.1:8101
+JAHVI_WORKER_2_URL=http://127.0.0.1:8102
+JAHVI_WORKER_1_PORT=8101
+JAHVI_WORKER_2_PORT=8102
+JAHVI_WORKER_1_CAPACITY=1
+JAHVI_WORKER_2_CAPACITY=1
+JAHVI_WORKER_CAPACITY=1
+```
+
+Start each command from the repository root in its own terminal. The entry API
+is the only process the frontend should call:
 
 ```bash
 python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-The API is available at `http://localhost:8000`.
+```bash
+JAHVI_WORKER_ID=worker-1 JAHVI_WORKER_CAPACITY=1 python -m uvicorn main:app --app-dir backend/worker1 --host 0.0.0.0 --port "$JAHVI_WORKER_1_PORT"
+```
+
+```bash
+JAHVI_WORKER_ID=worker-2 JAHVI_WORKER_CAPACITY=1 python -m uvicorn main:app --app-dir backend/worker2 --host 0.0.0.0 --port "$JAHVI_WORKER_2_PORT"
+```
+
+Each worker folder contains its own copy of the worker app, processing
+modules, and runtime dependencies; neither imports code from the other worker
+or the entry API. Install that folder's `requirements.txt` on each worker.
+Configure the same `DATABASE_URL`, `UPLOADTHING_TOKEN`, and
+`JAHVI_WORKER_SHARED_SECRET` on the entry and both workers. Keep worker ports
+private; HMAC authenticates requests but does not encrypt them. Use private
+networking or TLS between services in deployment.
 
 ## Install FFmpeg
 
@@ -22,11 +53,10 @@ ffmpeg -version
 ffprobe -version
 ```
 
-Then install the Python dependencies and start the backend:
+Then install the Python dependencies and start the three backend processes above:
 
 ```bash
 python -m pip install -r backend/requirements.txt
-python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
 The Headshot Lab uses `patchless.py` by default. Selecting `Exact gap` in the

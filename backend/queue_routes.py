@@ -9,7 +9,7 @@ mid-run.
 """
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -27,13 +27,20 @@ def _job_to_payload(db: Session, job: QueuedJob) -> dict:
         "edit_type": job.edit_type,
         "status": job.status,
         "created_at": job.created_at,
+        "started_at": job.started_at,
+        "completed_at": job.completed_at,
+        "updated_at": job.updated_at,
+        "progress_percent": job.progress_percent,
+        "progress_message": job.progress_message,
     }
+    if job.assigned_worker:
+        payload["worker"] = job.assigned_worker
     if job.status == "queued":
         payload["queue_position"] = queue_position(db, job)
     if job.status == "completed" and job.output_file_key:
         payload["video_url"] = f"/api/videos/{job.id}/output"
-    if job.status == "failed" and job.error_message:
-        payload["error"] = job.error_message
+    if job.status == "failed":
+        payload["error"] = "Processing failed. Please try again."
     return payload
 
 
@@ -51,6 +58,7 @@ def list_my_videos(user: User = Depends(get_current_user), db: Session = Depends
 @router.get("/{job_id}/output")
 def stream_completed_video(
     job_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -58,12 +66,43 @@ def stream_completed_video(
     if job is None or job.status != "completed" or not job.output_file_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
-    def content():
-        with httpx.stream("GET", get_file_url(job.output_file_key), timeout=120.0) as response:
-            response.raise_for_status()
-            yield from response.iter_bytes(1024 * 1024)
+    request_headers = {}
+    if range_header := request.headers.get("range"):
+        request_headers["Range"] = range_header
+    upstream_context = httpx.stream(
+        "GET",
+        get_file_url(job.output_file_key),
+        headers=request_headers,
+        timeout=120.0,
+    )
+    try:
+        upstream = upstream_context.__enter__()
+        if upstream.status_code >= 400:
+            upstream.close()
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not stream the completed video")
+    except HTTPException:
+        raise
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not stream the completed video") from error
 
-    return StreamingResponse(content(), media_type="video/mp4")
+    response_headers = {
+        name: upstream.headers[name]
+        for name in ("accept-ranges", "content-length", "content-range", "etag", "last-modified")
+        if name in upstream.headers
+    }
+
+    def content():
+        try:
+            yield from upstream.iter_bytes(1024 * 1024)
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        content(),
+        status_code=upstream.status_code,
+        media_type="video/mp4",
+        headers=response_headers,
+    )
 
 
 @router.delete("/{job_id}")
